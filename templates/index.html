@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shopify Data Management App</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 40px;
+            max-width: 600px;
+            width: 90%;
+            text-align: center;
+        }
+        
+        .logo {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 50%;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            color: white;
+            font-weight: bold;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.2em;
+        }
+        
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+        
+        .feature {
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .feature h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .feature p {
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        .auth-section {
+            margin: 30px 0;
+            padding: 30px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        
+        .shop-input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 10px;
+            font-size: 16px;
+            margin-bottom: 15px;
+            transition: border-color 0.3s;
+        }
+        
+        .shop-input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .auth-button {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+            width: 100%;
+        }
+        
+        .auth-button:hover {
+            transform: translateY(-2px);
+        }
+        
+        .api-section {
+            margin-top: 30px;
+            text-align: left;
+        }
+        
+        .api-section h3 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+        
+        .api-endpoint {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            border-left: 4px solid #28a745;
+        }
+        
+        .method {
+            color: #28a745;
+            font-weight: bold;
+        }
+        
+        .url {
+            color: #007bff;
+        }
+        
+        .description {
+            color: #666;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">S</div>
+        <h1>Shopify Data Manager</h1>
+        <p class="subtitle">Comprehensive catalog, inventory, and orders management</p>
+        
+        <div class="features">
+            <div class="feature">
+                <h3>📦 Products</h3>
+                <p>Fetch and manage product catalogs with variants and pricing</p>
+            </div>
+            <div class="feature">
+                <h3>📊 Inventory</h3>
+                <p>Track inventory levels across multiple locations</p>
+            </div>
+            <div class="feature">
+                <h3>🛒 Orders</h3>
+                <p>Pull and push order data with real-time updates</p>
+            </div>
+            <div class="feature">
+                <h3>🔄 Sync</h3>
+                <p>Bidirectional data synchronization with webhooks</p>
+            </div>
+        </div>
+        
+        <div class="auth-section">
+            <h3>Connect Your Shopify Store</h3>
+            <p>Enter your shop domain to start the authentication process</p>
+            <form id="authForm">
+                <input 
+                    type="text" 
+                    class="shop-input" 
+                    placeholder="your-shop.myshopify.com"
+                    id="shopInput"
+                    required
+                >
+                <button type="submit" class="auth-button">
+                    Connect to Shopify
+                </button>
+            </form>
+        </div>
+        
+        <div class="api-section">
+            <h3>API Endpoints</h3>
+            <div class="api-endpoint">
+                <span class="method">GET</span> <span class="url">/api/products?shop=your-shop.myshopify.com</span>
+                <div class="description">Fetch all products from your store</div>
+            </div>
+            <div class="api-endpoint">
+                <span class="method">GET</span> <span class="url">/api/orders?shop=your-shop.myshopify.com</span>
+                <div class="description">Fetch all orders from your store</div>
+            </div>
+            <div class="api-endpoint">
+                <span class="method">GET</span> <span class="url">/api/inventory?shop=your-shop.myshopify.com</span>
+                <div class="description">Fetch inventory levels across locations</div>
+            </div>
+            <div class="api-endpoint">
+                <span class="method">POST</span> <span class="url">/api/sync/products</span>
+                <div class="description">Sync products to local database</div>
+            </div>
+            <div class="api-endpoint">
+                <span class="method">POST</span> <span class="url">/api/sync/orders</span>
+                <div class="description">Sync orders to local database</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        document.getElementById('authForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const shop = document.getElementById('shopInput').value.trim();
+            
+            if (!shop) {
+                alert('Please enter a shop domain');
+                return;
+            }
+            
+            // Add .myshopify.com if not present
+            const shopDomain = shop.includes('.myshopify.com') ? shop : shop + '.myshopify.com';
+            
+            // Redirect to auth endpoint
+            window.location.href = `/auth?shop=${encodeURIComponent(shopDomain)}`;
+        });
+    </script>
+</body>
+</html>
