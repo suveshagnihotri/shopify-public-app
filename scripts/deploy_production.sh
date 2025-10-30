@@ -26,18 +26,56 @@ fi
 
 cd "${PROJECT_DIR}"
 
-echo "==> Installing base packages"
-sudo apt-get update -y
-sudo apt-get install -y nginx snapd
+echo "==> Detecting package manager"
+PKG=""
+if command -v apt-get >/dev/null 2>&1; then PKG=apt; fi
+if command -v dnf >/dev/null 2>&1; then PKG=dnf; fi
+if [[ -z "$PKG" ]] && command -v yum >/dev/null 2>&1; then PKG=yum; fi
+if [[ -z "$PKG" ]]; then echo "ERROR: No supported package manager found (apt/dnf/yum)."; exit 1; fi
+
+echo "==> Installing base packages with $PKG"
+case "$PKG" in
+  apt)
+    sudo apt-get update -y
+    sudo apt-get install -y nginx snapd ca-certificates curl gnupg git
+    ;;
+  dnf)
+    sudo dnf -y install nginx ca-certificates curl gnupg2 git
+    ;;
+  yum)
+    sudo yum -y install nginx ca-certificates curl gnupg2 git
+    ;;
+esac
 
 echo "==> Installing Docker & Compose"
 if ! command -v docker >/dev/null 2>&1; then
-  sudo apt-get install -y ca-certificates curl gnupg
-  sudo install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-  sudo apt-get update -y
-  sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  case "$PKG" in
+    apt)
+      sudo install -m 0755 -d /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+      sudo apt-get update -y
+      sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      ;;
+    dnf)
+      sudo dnf -y install docker docker-compose-plugin || true
+      # Fallback compose v2 standalone if plugin unavailable
+      if ! docker compose version >/dev/null 2>&1; then
+        sudo curl -L "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        sudo chmod +x /usr/local/bin/docker-compose
+      fi
+      ;;
+    yum)
+      sudo yum -y install docker || true
+      # Compose plugin may be unavailable; install standalone
+      if ! command -v docker-compose >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+        sudo curl -L "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        sudo chmod +x /usr/local/bin/docker-compose
+      fi
+      ;;
+  esac
+  sudo systemctl enable docker || true
+  sudo systemctl start docker || true
   sudo usermod -aG docker $USER || true
 fi
 
@@ -63,13 +101,39 @@ docker compose pull || true
 docker compose up -d --build
 
 echo "==> Installing Certbot and issuing certificate"
-sudo snap install core || true
-sudo snap refresh core || true
-sudo snap install --classic certbot || true
-sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+if command -v snap >/dev/null 2>&1; then
+  sudo snap install core || true
+  sudo snap refresh core || true
+  sudo snap install --classic certbot || true
+  sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+else
+  case "$PKG" in
+    apt)
+      sudo apt-get install -y certbot python3-certbot-nginx
+      ;;
+    dnf)
+      sudo dnf -y install certbot python3-certbot-nginx
+      ;;
+    yum)
+      # Enable EPEL on Amazon Linux 2 if needed
+      if command -v amazon-linux-extras >/dev/null 2>&1; then
+        sudo amazon-linux-extras enable epel || true
+        sudo yum clean metadata || true
+      fi
+      sudo yum -y install certbot python3-certbot-nginx || sudo yum -y install certbot python2-certbot-nginx || true
+      ;;
+  esac
+fi
 sudo certbot --nginx -d ${DOMAIN} -d www.${DOMAIN} --non-interactive --agree-tos -m ${EMAIL} || true
 
 echo "==> Creating systemd unit for docker compose"
+COMPOSE_BIN="/usr/bin/docker compose"
+if ! $COMPOSE_BIN version >/dev/null 2>&1; then
+  if command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_BIN="/usr/local/bin/docker-compose"
+  fi
+fi
+
 sudo tee /etc/systemd/system/shopify-app.service >/dev/null <<UNIT
 [Unit]
 Description=Shopify Public App (Docker Compose)
@@ -79,8 +143,8 @@ After=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=${PROJECT_DIR}
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
+ExecStart=${COMPOSE_BIN} up -d
+ExecStop=${COMPOSE_BIN} down
 RemainAfterExit=yes
 
 [Install]
