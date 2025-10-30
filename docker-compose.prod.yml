@@ -1,6 +1,7 @@
 services:
   app:
     build: .
+    image: shopify_public_app:latest
     environment:
       - FLASK_ENV=production
       - DATABASE_URL=${DATABASE_URL}
@@ -19,12 +20,13 @@ services:
     command: gunicorn -w 3 -k sync -b 0.0.0.0:5000 app:app
 
   worker:
-    build: .
+    image: shopify_public_app:latest
     environment:
       - FLASK_ENV=production
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
     depends_on:
+      - app
       - db
       - redis
     volumes:
