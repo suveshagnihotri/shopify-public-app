@@ -5,17 +5,26 @@ set -euo pipefail
 DOMAIN=${DOMAIN:-peeq.co.in}
 EMAIL=${EMAIL:-admin@${DOMAIN}}
 PROJECT_DIR=${PROJECT_DIR:-/home/ubuntu/shopify_public_app}
+GIT_URL=${GIT_URL:-}
+BRANCH=${BRANCH:-main}
 NGINX_SITE=/etc/nginx/sites-available/${DOMAIN}
 NGINX_LINK=/etc/nginx/sites-enabled/${DOMAIN}
 
 echo "==> Starting production deployment for ${DOMAIN}"
 
 if [[ ! -d ${PROJECT_DIR} ]]; then
-  echo "ERROR: PROJECT_DIR ${PROJECT_DIR} does not exist"
-  exit 1
+  if [[ -n "${GIT_URL}" ]]; then
+    echo "==> PROJECT_DIR not found. Cloning ${GIT_URL} into ${PROJECT_DIR}"
+    sudo mkdir -p "${PROJECT_DIR}"
+    sudo chown -R "$USER":"$USER" "${PROJECT_DIR}"
+    git clone --branch "${BRANCH}" "${GIT_URL}" "${PROJECT_DIR}"
+  else
+    echo "==> PROJECT_DIR not found and GIT_URL not provided. Using current directory $(pwd) as PROJECT_DIR."
+    PROJECT_DIR=$(pwd)
+  fi
 fi
 
-cd ${PROJECT_DIR}
+cd "${PROJECT_DIR}"
 
 echo "==> Installing base packages"
 sudo apt-get update -y
