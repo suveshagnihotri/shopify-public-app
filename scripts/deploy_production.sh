@@ -40,10 +40,21 @@ case "$PKG" in
     sudo apt-get install -y nginx snapd ca-certificates curl gnupg git
     ;;
   dnf)
-    sudo dnf -y install nginx ca-certificates curl gnupg2 git
+    # Amazon Linux 2023 / RHEL9 derivatives often ship curl-minimal by default.
+    # Avoid pulling full curl/gnupg to prevent conflicts.
+    sudo dnf -y install nginx git ca-certificates
+    # Resolve gnupg minimal conflicts if present
+    if rpm -q gnupg2-minimal >/dev/null 2>&1; then
+      echo "==> Replacing gnupg2-minimal with gnupg2 to avoid conflicts"
+      sudo dnf -y swap gnupg2-minimal gnupg2 || sudo dnf -y remove gnupg2-minimal || true
+    fi
     ;;
   yum)
-    sudo yum -y install nginx ca-certificates curl gnupg2 git
+    sudo yum -y install nginx git ca-certificates
+    if rpm -q gnupg2-minimal >/dev/null 2>&1; then
+      echo "==> Replacing gnupg2-minimal with gnupg2 to avoid conflicts"
+      sudo yum -y swap gnupg2-minimal gnupg2 || sudo yum -y remove gnupg2-minimal || true
+    fi
     ;;
 esac
 
@@ -58,9 +69,11 @@ if ! command -v docker >/dev/null 2>&1; then
       sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
       ;;
     dnf)
-      sudo dnf -y install docker docker-compose-plugin || true
+      sudo dnf -y install docker || true
       # Fallback compose v2 standalone if plugin unavailable
       if ! docker compose version >/dev/null 2>&1; then
+        # Ensure curl binary is available (curl-minimal typically is). If not, install curl.
+        if ! command -v curl >/dev/null 2>&1; then sudo dnf -y install curl || true; fi
         sudo curl -L "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
         sudo chmod +x /usr/local/bin/docker-compose
       fi
@@ -69,6 +82,7 @@ if ! command -v docker >/dev/null 2>&1; then
       sudo yum -y install docker || true
       # Compose plugin may be unavailable; install standalone
       if ! command -v docker-compose >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+        if ! command -v curl >/dev/null 2>&1; then sudo yum -y install curl || true; fi
         sudo curl -L "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
         sudo chmod +x /usr/local/bin/docker-compose
       fi
