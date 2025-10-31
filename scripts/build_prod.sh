@@ -2,7 +2,7 @@
 set -euo pipefail
 
 echo "==> Building production Docker images"
-docker compose -f docker-compose.prod.yml build
+docker-compose -f docker-compose.prod.yml build
 
 echo "==> Build complete!"
 
