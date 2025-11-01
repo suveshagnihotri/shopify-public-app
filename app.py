@@ -8,6 +8,7 @@ import hmac
 import hashlib
 import json
 import logging
+import base64
 from datetime import datetime, timedelta
 from urllib.parse import urlencode, parse_qs
 
@@ -105,16 +106,50 @@ celery = Celery(
 
 # Utility functions
 def verify_webhook(data, signature):
-    """Verify webhook signature"""
+    """
+    Verify webhook signature using HMAC-SHA256
+    Following Shopify's best practices: https://shopify.dev/docs/apps/build/webhooks/subscribe/https
+    
+    Args:
+        data: Raw request body (bytes)
+        signature: X-Shopify-Hmac-Sha256 header value (base64-encoded)
+    
+    Returns:
+        bool: True if signature is valid, False otherwise
+    """
     if not WEBHOOK_SECRET:
+        logger.warning("WEBHOOK_SECRET not set - skipping verification (not recommended for production)")
         return True  # Skip verification in development
     
-    hmac_obj = hmac.new(
-        WEBHOOK_SECRET.encode('utf-8'),
-        data,
-        hashlib.sha256
-    )
-    return hmac.compare_digest(hmac_obj.hexdigest(), signature)
+    if not signature:
+        logger.error("Missing webhook signature header")
+        return False
+    
+    try:
+        # Calculate HMAC digest
+        hmac_obj = hmac.new(
+            WEBHOOK_SECRET.encode('utf-8'),
+            data,
+            hashlib.sha256
+        )
+        calculated_digest = hmac_obj.digest()  # Get bytes
+        
+        # Decode signature from base64
+        try:
+            signature_bytes = base64.b64decode(signature)
+        except Exception as e:
+            logger.error(f"Failed to decode signature from base64: {e}")
+            return False
+        
+        # Use timing-safe comparison to prevent timing attacks
+        if len(calculated_digest) != len(signature_bytes):
+            return False
+        
+        return hmac.compare_digest(calculated_digest, signature_bytes)
+        
+    except Exception as e:
+        logger.error(f"Error verifying webhook signature: {e}")
+        return False
 
 def get_shopify_session(shop_domain, access_token):
     """Create Shopify session for API calls"""
@@ -409,198 +444,191 @@ def sync_orders():
 
 @app.route('/webhooks/products/create', methods=['POST'])
 def webhook_products_create():
-    """Handle product creation webhook"""
-    data = request.get_data()
+    """
+    Handle product creation webhook
+    Following Shopify's best practices: https://shopify.dev/docs/apps/build/webhooks/subscribe/https
+    """
+    # Get raw body for HMAC verification (before any parsing)
+    raw_data = request.get_data()
     signature = request.headers.get('X-Shopify-Hmac-Sha256')
     
-    if not verify_webhook(data, signature):
+    # Validate webhook origin (Step 2: Validate the origin)
+    if not verify_webhook(raw_data, signature):
+        logger.error("Invalid webhook signature for products/create")
         return jsonify({'error': 'Invalid signature'}), 401
     
-    product_data = request.json
-    logger.info(f"Product created: {product_data['id']}")
+    # Parse JSON from raw data (after verification)
+    try:
+        product_data = json.loads(raw_data.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        logger.error(f"Failed to parse webhook JSON: {e}")
+        return jsonify({'error': 'Invalid JSON'}), 400
     
-    # Process webhook data
-    process_product_webhook.delay(product_data)
+    # Queue webhook for async processing (Step 3: Queue your webhooks)
+    # This ensures we respond quickly (< 5 seconds, ideally < 1 second)
+    try:
+        process_product_webhook.delay(product_data)
+        logger.info(f"Product webhook queued: {product_data.get('id', 'unknown')}")
+    except Exception as e:
+        logger.error(f"Failed to queue product webhook: {e}")
+        # Still return 200 to prevent retry loops
+        return jsonify({'status': 'queued with errors'}), 200
     
-    return jsonify({'status': 'success'})
+    # Step 1: Respond with 200 OK quickly
+    return jsonify({'status': 'success'}), 200
 
 @app.route('/webhooks/orders/create', methods=['POST'])
 def webhook_orders_create():
-    """Handle order creation webhook"""
-    data = request.get_data()
+    """
+    Handle order creation webhook
+    Following Shopify's best practices: https://shopify.dev/docs/apps/build/webhooks/subscribe/https
+    """
+    # Get raw body for HMAC verification (before any parsing)
+    raw_data = request.get_data()
     signature = request.headers.get('X-Shopify-Hmac-Sha256')
     
-    if not verify_webhook(data, signature):
+    # Validate webhook origin (Step 2: Validate the origin)
+    if not verify_webhook(raw_data, signature):
+        logger.error("Invalid webhook signature for orders/create")
         return jsonify({'error': 'Invalid signature'}), 401
     
-    order_data = request.json
-    logger.info(f"Order created: {order_data['id']}")
+    # Parse JSON from raw data (after verification)
+    try:
+        order_data = json.loads(raw_data.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        logger.error(f"Failed to parse webhook JSON: {e}")
+        return jsonify({'error': 'Invalid JSON'}), 400
     
-    # Process webhook data
-    process_order_webhook.delay(order_data)
+    # Queue webhook for async processing (Step 3: Queue your webhooks)
+    # This ensures we respond quickly (< 5 seconds, ideally < 1 second)
+    try:
+        process_order_webhook.delay(order_data)
+        logger.info(f"Order webhook queued: {order_data.get('id', 'unknown')}")
+    except Exception as e:
+        logger.error(f"Failed to queue order webhook: {e}")
+        # Still return 200 to prevent retry loops
+        return jsonify({'status': 'queued with errors'}), 200
     
-    return jsonify({'status': 'success'})
+    # Step 1: Respond with 200 OK quickly
+    return jsonify({'status': 'success'}), 200
 
 # Mandatory compliance webhooks for customer privacy (GDPR/CCPA)
 @app.route('/webhooks/customers/data_request', methods=['POST'])
 def webhook_customers_data_request():
     """
     Mandatory webhook: Handle customer data request (GDPR compliance)
+    Following Shopify's best practices: https://shopify.dev/docs/apps/build/webhooks/subscribe/https
+    
     When a customer requests their data, Shopify will send this webhook.
     """
-    data = request.get_data()
+    # Get raw body for HMAC verification (before any parsing)
+    raw_data = request.get_data()
     signature = request.headers.get('X-Shopify-Hmac-Sha256')
     
-    if not verify_webhook(data, signature):
+    # Validate webhook origin (Step 2: Validate the origin)
+    if not verify_webhook(raw_data, signature):
+        logger.error("Invalid webhook signature for customers/data_request")
         return jsonify({'error': 'Invalid signature'}), 401
     
-    webhook_data = request.json
-    shop_domain = webhook_data.get('shop_domain')
-    customer_id = webhook_data.get('customer', {}).get('id') if isinstance(webhook_data.get('customer'), dict) else webhook_data.get('customer_id')
-    orders_requested = webhook_data.get('orders_requested', [])
+    # Parse JSON from raw data (after verification)
+    try:
+        webhook_data = json.loads(raw_data.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        logger.error(f"Failed to parse webhook JSON: {e}")
+        return jsonify({'error': 'Invalid JSON'}), 400
     
-    logger.info(f"Customer data request received for shop: {shop_domain}, customer: {customer_id}")
+    # Queue compliance processing asynchronously (Step 3: Queue your webhooks)
+    # This ensures we respond quickly (< 5 seconds, ideally < 1 second)
+    try:
+        process_customer_data_request.delay(webhook_data)
+        shop_domain = webhook_data.get('shop_domain')
+        customer_id = webhook_data.get('customer', {}).get('id') if isinstance(webhook_data.get('customer'), dict) else webhook_data.get('customer_id')
+        logger.info(f"Customer data request webhook queued for shop: {shop_domain}, customer: {customer_id}")
+    except Exception as e:
+        logger.error(f"Failed to queue customer data request webhook: {e}")
+        # Still return 200 to prevent retry loops (Shopify will retry if we return error)
+        return jsonify({'status': 'queued with errors'}), 200
     
-    # Log the data request for compliance
-    webhook_log = WebhookLog(
-        shop_id=None,  # Will be set if shop found
-        webhook_type='customers/data_request',
-        resource_id=str(customer_id) if customer_id else 'unknown',
-        status='received',
-        payload=json.dumps(webhook_data)
-    )
-    
-    # Try to find shop record
-    if shop_domain:
-        shop_record = Shop.query.filter_by(shop_domain=shop_domain).first()
-        if shop_record:
-            webhook_log.shop_id = shop_record.id
-    
-    db.session.add(webhook_log)
-    db.session.commit()
-    
-    # In a real app, you would:
-    # 1. Collect all customer data from your database
-    # 2. Compile it into a format the customer can access
-    # 3. Send it via email or make it available through your app
-    # For now, we just log it and return success
-    
-    logger.info(f"Processed customer data request for customer {customer_id}")
+    # Step 1: Respond with 200 OK quickly
     return jsonify({'status': 'success'}), 200
 
 @app.route('/webhooks/customers/redact', methods=['POST'])
 def webhook_customers_redact():
     """
     Mandatory webhook: Handle customer data deletion request (GDPR/CCPA compliance)
+    Following Shopify's best practices: https://shopify.dev/docs/apps/build/webhooks/subscribe/https
+    
     When a customer requests data deletion, Shopify will send this webhook.
     You must delete or anonymize all customer data from your systems.
     """
-    data = request.get_data()
+    # Get raw body for HMAC verification (before any parsing)
+    raw_data = request.get_data()
     signature = request.headers.get('X-Shopify-Hmac-Sha256')
     
-    if not verify_webhook(data, signature):
+    # Validate webhook origin (Step 2: Validate the origin)
+    if not verify_webhook(raw_data, signature):
+        logger.error("Invalid webhook signature for customers/redact")
         return jsonify({'error': 'Invalid signature'}), 401
     
-    webhook_data = request.json
-    shop_domain = webhook_data.get('shop_domain')
-    customer_id = webhook_data.get('customer', {}).get('id') if isinstance(webhook_data.get('customer'), dict) else webhook_data.get('customer_id')
-    orders_to_redact = webhook_data.get('orders_to_redact', [])
+    # Parse JSON from raw data (after verification)
+    try:
+        webhook_data = json.loads(raw_data.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        logger.error(f"Failed to parse webhook JSON: {e}")
+        return jsonify({'error': 'Invalid JSON'}), 400
     
-    logger.info(f"Customer redact request received for shop: {shop_domain}, customer: {customer_id}")
+    # Queue compliance processing asynchronously (Step 3: Queue your webhooks)
+    # This ensures we respond quickly (< 5 seconds, ideally < 1 second)
+    try:
+        process_customer_redact.delay(webhook_data)
+        shop_domain = webhook_data.get('shop_domain')
+        customer_id = webhook_data.get('customer', {}).get('id') if isinstance(webhook_data.get('customer'), dict) else webhook_data.get('customer_id')
+        logger.info(f"Customer redact webhook queued for shop: {shop_domain}, customer: {customer_id}")
+    except Exception as e:
+        logger.error(f"Failed to queue customer redact webhook: {e}")
+        # Still return 200 to prevent retry loops (Shopify will retry if we return error)
+        return jsonify({'status': 'queued with errors'}), 200
     
-    # Log the redact request
-    webhook_log = WebhookLog(
-        shop_id=None,
-        webhook_type='customers/redact',
-        resource_id=str(customer_id) if customer_id else 'unknown',
-        status='received',
-        payload=json.dumps(webhook_data)
-    )
-    
-    # Try to find shop record
-    if shop_domain:
-        shop_record = Shop.query.filter_by(shop_domain=shop_domain).first()
-        if shop_record:
-            webhook_log.shop_id = shop_record.id
-    
-    db.session.add(webhook_log)
-    
-    # In a real app, you would:
-    # 1. Delete or anonymize all customer data from your database
-    # 2. Delete all orders associated with this customer
-    # 3. Delete any other customer-related records
-    # For now, we just log it
-    
-    # Example: Anonymize order data if orders are linked to customers
-    # You would need to add customer_id to OrderSync model for this to work
-    
-    db.session.commit()
-    
-    logger.info(f"Processed customer redact request for customer {customer_id}")
+    # Step 1: Respond with 200 OK quickly
     return jsonify({'status': 'success'}), 200
 
 @app.route('/webhooks/shop/redact', methods=['POST'])
 def webhook_shop_redact():
     """
     Mandatory webhook: Handle shop uninstall data deletion request
+    Following Shopify's best practices: https://shopify.dev/docs/apps/build/webhooks/subscribe/https
+    
     When a shop uninstalls your app, Shopify will send this webhook.
     You must delete all shop-related data from your systems.
     """
-    data = request.get_data()
+    # Get raw body for HMAC verification (before any parsing)
+    raw_data = request.get_data()
     signature = request.headers.get('X-Shopify-Hmac-Sha256')
     
-    if not verify_webhook(data, signature):
+    # Validate webhook origin (Step 2: Validate the origin)
+    if not verify_webhook(raw_data, signature):
+        logger.error("Invalid webhook signature for shop/redact")
         return jsonify({'error': 'Invalid signature'}), 401
     
-    webhook_data = request.json
-    shop_domain = webhook_data.get('shop_domain')
+    # Parse JSON from raw data (after verification)
+    try:
+        webhook_data = json.loads(raw_data.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        logger.error(f"Failed to parse webhook JSON: {e}")
+        return jsonify({'error': 'Invalid JSON'}), 400
     
-    logger.info(f"Shop redact request received for shop: {shop_domain}")
+    # Queue compliance processing asynchronously (Step 3: Queue your webhooks)
+    # This ensures we respond quickly (< 5 seconds, ideally < 1 second)
+    try:
+        process_shop_redact.delay(webhook_data)
+        shop_domain = webhook_data.get('shop_domain')
+        logger.info(f"Shop redact webhook queued for shop: {shop_domain}")
+    except Exception as e:
+        logger.error(f"Failed to queue shop redact webhook: {e}")
+        # Still return 200 to prevent retry loops (Shopify will retry if we return error)
+        return jsonify({'status': 'queued with errors'}), 200
     
-    # Log the redact request
-    webhook_log = WebhookLog(
-        shop_id=None,
-        webhook_type='shop/redact',
-        resource_id=shop_domain or 'unknown',
-        status='received',
-        payload=json.dumps(webhook_data)
-    )
-    
-    # Find shop record
-    shop_record = None
-    if shop_domain:
-        shop_record = Shop.query.filter_by(shop_domain=shop_domain).first()
-        if shop_record:
-            webhook_log.shop_id = shop_record.id
-    
-    db.session.add(webhook_log)
-    
-    # Delete or anonymize all shop-related data
-    if shop_record:
-        # Delete all orders for this shop
-        OrderSync.query.filter_by(shop_id=shop_record.id).delete()
-        
-        # Delete all products for this shop
-        ProductSync.query.filter_by(shop_id=shop_record.id).delete()
-        
-        # Delete all inventory levels
-        InventoryLevel.query.filter_by(shop_id=shop_record.id).delete()
-        
-        # Delete all order line items
-        from models import OrderLineItem
-        OrderLineItem.query.filter_by(shop_id=shop_record.id).delete()
-        
-        # Delete all webhook logs for this shop
-        WebhookLog.query.filter_by(shop_id=shop_record.id).delete()
-        
-        # Delete the shop record itself
-        db.session.delete(shop_record)
-        
-        logger.info(f"Deleted all data for shop: {shop_domain}")
-    
-    db.session.commit()
-    
-    logger.info(f"Processed shop redact request for shop {shop_domain}")
+    # Step 1: Respond with 200 OK quickly
     return jsonify({'status': 'success'}), 200
 
 # Background tasks
@@ -749,6 +777,174 @@ def process_order_webhook(order_data):
         
     except Exception as e:
         logger.error(f"Error processing order webhook: {e}")
+
+# Compliance webhook processing tasks
+@celery.task
+def process_customer_data_request(webhook_data):
+    """
+    Process customer data request webhook (GDPR compliance)
+    Queued for async processing to ensure fast webhook response
+    """
+    try:
+        shop_domain = webhook_data.get('shop_domain')
+        customer_id = webhook_data.get('customer', {}).get('id') if isinstance(webhook_data.get('customer'), dict) else webhook_data.get('customer_id')
+        orders_requested = webhook_data.get('orders_requested', [])
+        
+        logger.info(f"Processing customer data request for shop: {shop_domain}, customer: {customer_id}")
+        
+        # Log the data request for compliance
+        webhook_log = WebhookLog(
+            shop_id=None,  # Will be set if shop found
+            webhook_type='customers/data_request',
+            resource_id=str(customer_id) if customer_id else 'unknown',
+            status='processing',
+            payload=json.dumps(webhook_data)
+        )
+        
+        # Try to find shop record
+        if shop_domain:
+            shop_record = Shop.query.filter_by(shop_domain=shop_domain).first()
+            if shop_record:
+                webhook_log.shop_id = shop_record.id
+        
+        db.session.add(webhook_log)
+        db.session.commit()
+        
+        # In a real app, you would:
+        # 1. Collect all customer data from your database
+        # 2. Compile it into a format the customer can access
+        # 3. Send it via email or make it available through your app
+        # For now, we just log it
+        
+        webhook_log.status = 'completed'
+        db.session.commit()
+        
+        logger.info(f"Completed customer data request for customer {customer_id}")
+        
+    except Exception as e:
+        logger.error(f"Error processing customer data request: {e}")
+        if 'webhook_log' in locals():
+            webhook_log.status = 'failed'
+            db.session.commit()
+
+@celery.task
+def process_customer_redact(webhook_data):
+    """
+    Process customer redact webhook (GDPR/CCPA compliance)
+    Queued for async processing to ensure fast webhook response
+    """
+    try:
+        shop_domain = webhook_data.get('shop_domain')
+        customer_id = webhook_data.get('customer', {}).get('id') if isinstance(webhook_data.get('customer'), dict) else webhook_data.get('customer_id')
+        orders_to_redact = webhook_data.get('orders_to_redact', [])
+        
+        logger.info(f"Processing customer redact for shop: {shop_domain}, customer: {customer_id}")
+        
+        # Log the redact request
+        webhook_log = WebhookLog(
+            shop_id=None,
+            webhook_type='customers/redact',
+            resource_id=str(customer_id) if customer_id else 'unknown',
+            status='processing',
+            payload=json.dumps(webhook_data)
+        )
+        
+        # Try to find shop record
+        if shop_domain:
+            shop_record = Shop.query.filter_by(shop_domain=shop_domain).first()
+            if shop_record:
+                webhook_log.shop_id = shop_record.id
+        
+        db.session.add(webhook_log)
+        db.session.commit()
+        
+        # In a real app, you would:
+        # 1. Delete or anonymize all customer data from your database
+        # 2. Delete all orders associated with this customer
+        # 3. Delete any other customer-related records
+        # For now, we just log it
+        
+        # Example: Anonymize order data if orders are linked to customers
+        # You would need to add customer_id to OrderSync model for this to work
+        if shop_domain and customer_id:
+            # TODO: Implement actual data deletion/anonymization
+            # OrderSync.query.filter_by(shop_id=shop_record.id, customer_id=customer_id).delete()
+            pass
+        
+        webhook_log.status = 'completed'
+        db.session.commit()
+        
+        logger.info(f"Completed customer redact for customer {customer_id}")
+        
+    except Exception as e:
+        logger.error(f"Error processing customer redact: {e}")
+        if 'webhook_log' in locals():
+            webhook_log.status = 'failed'
+            db.session.commit()
+
+@celery.task
+def process_shop_redact(webhook_data):
+    """
+    Process shop redact webhook (shop uninstall data deletion)
+    Queued for async processing to ensure fast webhook response
+    """
+    try:
+        shop_domain = webhook_data.get('shop_domain')
+        
+        logger.info(f"Processing shop redact for shop: {shop_domain}")
+        
+        # Log the redact request
+        webhook_log = WebhookLog(
+            shop_id=None,
+            webhook_type='shop/redact',
+            resource_id=shop_domain or 'unknown',
+            status='processing',
+            payload=json.dumps(webhook_data)
+        )
+        
+        # Find shop record
+        shop_record = None
+        if shop_domain:
+            shop_record = Shop.query.filter_by(shop_domain=shop_domain).first()
+            if shop_record:
+                webhook_log.shop_id = shop_record.id
+        
+        db.session.add(webhook_log)
+        db.session.commit()
+        
+        # Delete or anonymize all shop-related data
+        if shop_record:
+            # Delete all orders for this shop
+            OrderSync.query.filter_by(shop_id=shop_record.id).delete()
+            
+            # Delete all products for this shop
+            ProductSync.query.filter_by(shop_id=shop_record.id).delete()
+            
+            # Delete all inventory levels
+            InventoryLevel.query.filter_by(shop_id=shop_record.id).delete()
+            
+            # Delete all order line items
+            from models import OrderLineItem
+            OrderLineItem.query.filter_by(shop_id=shop_record.id).delete()
+            
+            # Delete all webhook logs for this shop (except this one)
+            WebhookLog.query.filter_by(shop_id=shop_record.id).filter(WebhookLog.id != webhook_log.id).delete()
+            
+            # Delete the shop record itself
+            db.session.delete(shop_record)
+            
+            logger.info(f"Deleted all data for shop: {shop_domain}")
+        
+        webhook_log.status = 'completed'
+        db.session.commit()
+        
+        logger.info(f"Completed shop redact for shop {shop_domain}")
+        
+    except Exception as e:
+        logger.error(f"Error processing shop redact: {e}")
+        if 'webhook_log' in locals():
+            webhook_log.status = 'failed'
+            db.session.commit()
 
 if __name__ == '__main__':
     with app.app_context():
