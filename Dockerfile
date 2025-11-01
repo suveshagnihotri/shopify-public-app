@@ -21,7 +21,7 @@ RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
 # Expose port
-EXPOSE 5000
+EXPOSE 8000
 
 # Default command
 CMD ["python", "app.py"]

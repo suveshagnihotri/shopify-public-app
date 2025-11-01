@@ -36,7 +36,9 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Allow cross-site redirects but 
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=15)  # Session timeout
 
 # Configure Flask-Session to use Redis for session storage (required for multiple workers)
-redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+# In Docker, use service name 'redis', locally use 'localhost'
+default_redis = 'redis://redis:6379/0' if os.getenv('FLASK_ENV') == 'production' else 'redis://localhost:6379/0'
+redis_url = os.getenv('REDIS_URL', default_redis)
 # Use a different Redis database for sessions (db 1) to avoid conflicts with Celery (db 0)
 session_redis_url = redis_url.rsplit('/', 1)[0] + '/1'  # Change db number to 1
 app.config['SESSION_TYPE'] = 'redis'
@@ -67,10 +69,11 @@ WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET')
 shopify.ShopifyResource.set_site("https://{shop}.myshopify.com/admin/api/2023-10")
 
 # Initialize Celery
+# Use the same redis_url we configured for sessions above
 celery = Celery(
     app.import_name,
-    broker=os.getenv('REDIS_URL', 'redis://localhost:6379/0'),
-    backend=os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    broker=redis_url,
+    backend=redis_url
 )
 
 # Database Models are now imported from models.py

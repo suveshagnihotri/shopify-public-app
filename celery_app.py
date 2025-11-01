@@ -9,10 +9,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Create Celery instance
+# In Docker, use service name 'redis', locally use 'localhost'
+default_redis = 'redis://redis:6379/0' if os.getenv('FLASK_ENV') == 'production' else 'redis://localhost:6379/0'
+redis_url = os.getenv('REDIS_URL', default_redis)
 celery = Celery(
     'shopify_app',
-    broker=os.getenv('REDIS_URL', 'redis://localhost:6379/0'),
-    backend=os.getenv('REDIS_URL', 'redis://localhost:6379/0'),
+    broker=redis_url,
+    backend=redis_url,
     include=['tasks']
 )
 
