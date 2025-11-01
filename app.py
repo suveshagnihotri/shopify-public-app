@@ -441,6 +441,168 @@ def webhook_orders_create():
     
     return jsonify({'status': 'success'})
 
+# Mandatory compliance webhooks for customer privacy (GDPR/CCPA)
+@app.route('/webhooks/customers/data_request', methods=['POST'])
+def webhook_customers_data_request():
+    """
+    Mandatory webhook: Handle customer data request (GDPR compliance)
+    When a customer requests their data, Shopify will send this webhook.
+    """
+    data = request.get_data()
+    signature = request.headers.get('X-Shopify-Hmac-Sha256')
+    
+    if not verify_webhook(data, signature):
+        return jsonify({'error': 'Invalid signature'}), 401
+    
+    webhook_data = request.json
+    shop_domain = webhook_data.get('shop_domain')
+    customer_id = webhook_data.get('customer', {}).get('id') if isinstance(webhook_data.get('customer'), dict) else webhook_data.get('customer_id')
+    orders_requested = webhook_data.get('orders_requested', [])
+    
+    logger.info(f"Customer data request received for shop: {shop_domain}, customer: {customer_id}")
+    
+    # Log the data request for compliance
+    webhook_log = WebhookLog(
+        shop_id=None,  # Will be set if shop found
+        webhook_type='customers/data_request',
+        resource_id=str(customer_id) if customer_id else 'unknown',
+        status='received',
+        payload=json.dumps(webhook_data)
+    )
+    
+    # Try to find shop record
+    if shop_domain:
+        shop_record = Shop.query.filter_by(shop_domain=shop_domain).first()
+        if shop_record:
+            webhook_log.shop_id = shop_record.id
+    
+    db.session.add(webhook_log)
+    db.session.commit()
+    
+    # In a real app, you would:
+    # 1. Collect all customer data from your database
+    # 2. Compile it into a format the customer can access
+    # 3. Send it via email or make it available through your app
+    # For now, we just log it and return success
+    
+    logger.info(f"Processed customer data request for customer {customer_id}")
+    return jsonify({'status': 'success'}), 200
+
+@app.route('/webhooks/customers/redact', methods=['POST'])
+def webhook_customers_redact():
+    """
+    Mandatory webhook: Handle customer data deletion request (GDPR/CCPA compliance)
+    When a customer requests data deletion, Shopify will send this webhook.
+    You must delete or anonymize all customer data from your systems.
+    """
+    data = request.get_data()
+    signature = request.headers.get('X-Shopify-Hmac-Sha256')
+    
+    if not verify_webhook(data, signature):
+        return jsonify({'error': 'Invalid signature'}), 401
+    
+    webhook_data = request.json
+    shop_domain = webhook_data.get('shop_domain')
+    customer_id = webhook_data.get('customer', {}).get('id') if isinstance(webhook_data.get('customer'), dict) else webhook_data.get('customer_id')
+    orders_to_redact = webhook_data.get('orders_to_redact', [])
+    
+    logger.info(f"Customer redact request received for shop: {shop_domain}, customer: {customer_id}")
+    
+    # Log the redact request
+    webhook_log = WebhookLog(
+        shop_id=None,
+        webhook_type='customers/redact',
+        resource_id=str(customer_id) if customer_id else 'unknown',
+        status='received',
+        payload=json.dumps(webhook_data)
+    )
+    
+    # Try to find shop record
+    if shop_domain:
+        shop_record = Shop.query.filter_by(shop_domain=shop_domain).first()
+        if shop_record:
+            webhook_log.shop_id = shop_record.id
+    
+    db.session.add(webhook_log)
+    
+    # In a real app, you would:
+    # 1. Delete or anonymize all customer data from your database
+    # 2. Delete all orders associated with this customer
+    # 3. Delete any other customer-related records
+    # For now, we just log it
+    
+    # Example: Anonymize order data if orders are linked to customers
+    # You would need to add customer_id to OrderSync model for this to work
+    
+    db.session.commit()
+    
+    logger.info(f"Processed customer redact request for customer {customer_id}")
+    return jsonify({'status': 'success'}), 200
+
+@app.route('/webhooks/shop/redact', methods=['POST'])
+def webhook_shop_redact():
+    """
+    Mandatory webhook: Handle shop uninstall data deletion request
+    When a shop uninstalls your app, Shopify will send this webhook.
+    You must delete all shop-related data from your systems.
+    """
+    data = request.get_data()
+    signature = request.headers.get('X-Shopify-Hmac-Sha256')
+    
+    if not verify_webhook(data, signature):
+        return jsonify({'error': 'Invalid signature'}), 401
+    
+    webhook_data = request.json
+    shop_domain = webhook_data.get('shop_domain')
+    
+    logger.info(f"Shop redact request received for shop: {shop_domain}")
+    
+    # Log the redact request
+    webhook_log = WebhookLog(
+        shop_id=None,
+        webhook_type='shop/redact',
+        resource_id=shop_domain or 'unknown',
+        status='received',
+        payload=json.dumps(webhook_data)
+    )
+    
+    # Find shop record
+    shop_record = None
+    if shop_domain:
+        shop_record = Shop.query.filter_by(shop_domain=shop_domain).first()
+        if shop_record:
+            webhook_log.shop_id = shop_record.id
+    
+    db.session.add(webhook_log)
+    
+    # Delete or anonymize all shop-related data
+    if shop_record:
+        # Delete all orders for this shop
+        OrderSync.query.filter_by(shop_id=shop_record.id).delete()
+        
+        # Delete all products for this shop
+        ProductSync.query.filter_by(shop_id=shop_record.id).delete()
+        
+        # Delete all inventory levels
+        InventoryLevel.query.filter_by(shop_id=shop_record.id).delete()
+        
+        # Delete all order line items
+        from models import OrderLineItem
+        OrderLineItem.query.filter_by(shop_id=shop_record.id).delete()
+        
+        # Delete all webhook logs for this shop
+        WebhookLog.query.filter_by(shop_id=shop_record.id).delete()
+        
+        # Delete the shop record itself
+        db.session.delete(shop_record)
+        
+        logger.info(f"Deleted all data for shop: {shop_domain}")
+    
+    db.session.commit()
+    
+    logger.info(f"Processed shop redact request for shop {shop_domain}")
+    return jsonify({'status': 'success'}), 200
+
 # Background tasks
 @celery.task
 def sync_products_task(shop_id, shop_domain, access_token):
