@@ -97,26 +97,185 @@ docker-compose -f docker-compose.prod.yml exec app flask db migrate -m "Initial 
 docker-compose -f docker-compose.prod.yml exec app flask db upgrade
 ```
 
-### 5. Configure SSL Certificate (Optional)
+### 5. Configure SSL Certificate (Required for Production)
 
-For production, set up SSL with Let's Encrypt:
+For production, set up SSL with Let's Encrypt. Follow these steps carefully:
+
+#### Prerequisites
+
+Before installing SSL certificates, ensure:
+- ✅ Domain DNS points to your server (`peeq.co.in` → your server IP)
+- ✅ Port 80 (HTTP) is open in firewall/security group
+- ✅ Nginx is running and accessible via HTTP
+- ✅ App service is running and responding
+
+#### Step 1: Verify Prerequisites
 
 ```bash
-# Make sure domain points to your server
-# Then run certbot
+# Check services are running
+docker-compose -f docker-compose.prod.yml ps
+
+# Test HTTP access
+curl -I http://peeq.co.in/
+
+# Should return HTTP 200 or 502 (if app isn't ready)
+
+# Test www subdomain
+curl -I http://www.peeq.co.in/
+
+# Both should be accessible
+```
+
+#### Step 2: Test ACME Challenge Path
+
+Verify nginx can serve ACME challenge files:
+
+```bash
+# Create a test file in the certbot volume (using nginx container)
+docker-compose -f docker-compose.prod.yml exec nginx sh -c 'mkdir -p /var/www/certbot/.well-known/acme-challenge/ && echo "test-ssl-setup" > /var/www/certbot/.well-known/acme-challenge/test-file'
+
+# Test if nginx can serve it from both domains
+curl http://peeq.co.in/.well-known/acme-challenge/test-file
+curl http://www.peeq.co.in/.well-known/acme-challenge/test-file
+
+# Both should return: test-ssl-setup
+# If you get 404, the nginx config needs fixing
+
+# Clean up test file
+docker-compose -f docker-compose.prod.yml exec nginx rm -f /var/www/certbot/.well-known/acme-challenge/test-file
+```
+
+#### Step 3: Install SSL Certificate
+
+**Option A: Use Installation Script (Recommended)**
+
+Run the automated SSL installation script:
+
+```bash
+./scripts/install_ssl.sh
+```
+
+The script will:
+- Check prerequisites
+- Test ACME challenge path
+- Install SSL certificates
+- Update nginx configuration
+- Restart nginx
+- Verify HTTPS is working
+
+**Option B: Manual Installation**
+
+Run certbot to obtain SSL certificates:
+
+```bash
 docker-compose -f docker-compose.prod.yml run --rm certbot certonly \
   --webroot \
   --webroot-path=/var/www/certbot \
-  --email your-email@example.com \
+  --email suveshagnihotri145@gmail.com \
   --agree-tos \
   --no-eff-email \
-  -d your-domain.com \
-  -d www.your-domain.com
+  -d peeq.co.in \
+  -d www.peeq.co.in
+```
 
-# Update nginx config to use HTTPS
-# Then restart nginx
+**Expected Success Output:**
+```
+Successfully received certificate.
+Certificate is saved at: /etc/letsencrypt/live/peeq.co.in/fullchain.pem
+Key is saved at:         /etc/letsencrypt/live/peeq.co.in/privkey.pem
+```
+
+#### Step 4: Update Nginx Configuration for HTTPS
+
+After certificates are installed, update nginx config to use HTTPS.
+
+**Using the HTTPS Template:**
+
+```bash
+# Copy the HTTPS configuration template
+cp nginx/peeq.conf.https nginx/peeq.conf
+
+# Restart nginx to apply changes
 docker-compose -f docker-compose.prod.yml restart nginx
 ```
+
+The HTTPS config includes:
+- HTTP to HTTPS redirect
+- SSL certificate paths
+- Security headers (HSTS, X-Frame-Options, etc.)
+- Modern SSL protocols (TLS 1.2/1.3)
+
+#### Step 5: Verify HTTPS Works
+
+```bash
+# Test HTTPS (should redirect HTTP to HTTPS)
+curl -I http://peeq.co.in/
+# Should return: HTTP/1.1 301 Moved Permanently
+
+# Test HTTPS directly
+curl -I https://peeq.co.in/
+curl -I https://www.peeq.co.in/
+
+# Should return HTTP 200 (not connection refused)
+```
+
+#### Step 6: Set Up Certificate Auto-Renewal
+
+Let's Encrypt certificates expire every 90 days. Set up auto-renewal:
+
+**Option A: Cron Job (Recommended)**
+
+Add to crontab on your EC2 server:
+
+```bash
+# Edit crontab
+crontab -e
+
+# Add this line to renew certificates daily at 2 AM
+0 2 * * * cd /path/to/shopify_public_app && docker-compose -f docker-compose.prod.yml run --rm certbot renew && docker-compose -f docker-compose.prod.yml restart nginx
+```
+
+**Option B: Systemd Timer (Advanced)**
+
+Create a systemd service and timer for certificate renewal.
+
+**Test Renewal:**
+
+```bash
+# Dry run to test renewal process
+docker-compose -f docker-compose.prod.yml run --rm certbot renew --dry-run
+```
+
+#### Troubleshooting SSL Installation
+
+**Issue: "Connection refused" during certbot challenge**
+- **Cause**: Let's Encrypt can't reach your server on port 80
+- **Solution**: 
+  - Check firewall/security group allows inbound traffic on port 80
+  - Verify DNS points to your server
+  - Ensure nginx is running
+
+**Issue: "Failed to authenticate"**
+- **Cause**: ACME challenge files not accessible
+- **Solution**: Verify Step 2 works (test file is accessible)
+
+**Issue: Certificates installed but HTTPS doesn't work**
+- **Cause**: Nginx not configured for HTTPS yet
+- **Solution**: Complete Step 4 to update nginx config
+
+**Issue: "nginx: [emerg] SSL_CTX_use_PrivateKey_file" error**
+- **Cause**: Certificate files not found in expected location
+- **Solution**: 
+  - Verify certificates exist: `docker-compose -f docker-compose.prod.yml run --rm certbot certificates`
+  - Check certificate paths in nginx config match certbot output
+  - Ensure `certbot_certs` volume is mounted in nginx service
+
+**Issue: Mixed content warnings or HTTP content on HTTPS site**
+- **Cause**: Some resources still loaded via HTTP
+- **Solution**: 
+  - Update all internal links to use HTTPS
+  - Set `SHOPIFY_REDIRECT_URI=https://peeq.co.in/auth/callback` in `.env`
+  - Verify `X-Forwarded-Proto` header is set correctly
 
 ### 6. Onboard a Shopify Store
 
