@@ -903,6 +903,80 @@ else:
 2. Verify nginx config: `docker-compose -f docker-compose.prod.yml exec nginx nginx -t`
 3. Ensure app service is running: `docker-compose -f docker-compose.prod.yml ps app`
 
+### Port 443 Already in Use
+
+**Error:** `Error starting userland proxy: listen tcp4 0.0.0.0:443: bind: address already in use`
+
+This means another process is using port 443. Common causes:
+
+**1. macOS AirPlay Receiver**
+- AirPlay Receiver uses port 443 on macOS
+- **Solution:** Disable AirPlay Receiver:
+  - Go to **System Settings** → **General** → **AirDrop & Handoff**
+  - Turn off **AirPlay Receiver**
+- **Or** change nginx to use a different port (see below)
+
+**2. Another Web Server (nginx, Apache)**
+- **Check:** `sudo lsof -i :443` or `sudo netstat -an | grep LISTEN | grep 443`
+- **Solution:** Stop the conflicting service or change nginx port
+
+**3. Stuck Docker Container**
+- **Check:** `docker ps -a | grep nginx`
+- **Solution:** Remove old containers: `docker-compose -f docker-compose.prod.yml down`
+
+**4. VPN or Proxy Service**
+- Some VPNs or proxies use port 443
+- **Solution:** Temporarily disable VPN or change nginx port
+
+**Quick Fixes:**
+
+**Option 1: Disable AirPlay Receiver (macOS)**
+```bash
+# Disable AirPlay Receiver via command line
+sudo defaults write com.apple.NetworkBrowser DisableAirPlayReceiver -bool YES
+
+# Restart services (logout/login may be required)
+sudo killall ControlCenter 2>/dev/null || true
+```
+
+**Option 2: Use Different Ports**
+Edit `docker-compose.prod.yml` and change nginx ports:
+```yaml
+ports:
+  - "8080:80"    # Use 8080 instead of 80
+  - "8443:443"   # Use 8443 instead of 443
+```
+
+Then update nginx config to listen on the mapped ports.
+
+**Option 3: Find and Kill the Process**
+```bash
+# Find what's using port 443
+sudo lsof -i :443
+
+# Kill the process (replace PID with actual process ID)
+sudo kill -9 <PID>
+```
+
+**Option 4: Check for Stuck Containers**
+```bash
+# Remove all stopped containers
+docker-compose -f docker-compose.prod.yml down
+
+# Remove all containers (including running)
+docker-compose -f docker-compose.prod.yml down --remove-orphans
+
+# Clean up
+docker system prune -f
+```
+
+**Verification:**
+After fixing, verify port 443 is free:
+```bash
+sudo lsof -i :443
+# Should return nothing if port is free
+```
+
 ## Production Checklist
 
 - [ ] `.env` file configured with production values
