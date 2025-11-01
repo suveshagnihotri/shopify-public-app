@@ -119,6 +119,8 @@ def verify_webhook(data, signature):
     """
     if not WEBHOOK_SECRET:
         logger.warning("WEBHOOK_SECRET not set - skipping verification (not recommended for production)")
+        # In production, this should return False, but for development/testing, allow it
+        # TODO: Set WEBHOOK_SECRET in production
         return True  # Skip verification in development
     
     if not signature:
@@ -126,26 +128,29 @@ def verify_webhook(data, signature):
         return False
     
     try:
-        # Calculate HMAC digest
+        # Calculate HMAC-SHA256 digest
         hmac_obj = hmac.new(
             WEBHOOK_SECRET.encode('utf-8'),
             data,
             hashlib.sha256
         )
-        calculated_digest = hmac_obj.digest()  # Get bytes
+        # Calculate HMAC and encode to base64 (Shopify sends signature as base64)
+        calculated_hmac = hmac_obj.digest()  # Get bytes
+        calculated_hmac_base64 = base64.b64encode(calculated_hmac).decode('utf-8')
         
-        # Decode signature from base64
-        try:
-            signature_bytes = base64.b64decode(signature)
-        except Exception as e:
-            logger.error(f"Failed to decode signature from base64: {e}")
-            return False
-        
+        # Shopify signature is already base64-encoded, compare base64 strings
         # Use timing-safe comparison to prevent timing attacks
-        if len(calculated_digest) != len(signature_bytes):
+        if len(calculated_hmac_base64) != len(signature):
+            logger.error(f"HMAC length mismatch: calculated={len(calculated_hmac_base64)}, received={len(signature)}")
             return False
         
-        return hmac.compare_digest(calculated_digest, signature_bytes)
+        # Compare base64-encoded strings (timing-safe)
+        is_valid = hmac.compare_digest(calculated_hmac_base64.encode('utf-8'), signature.encode('utf-8'))
+        
+        if not is_valid:
+            logger.debug(f"HMAC mismatch - Calculated: {calculated_hmac_base64[:20]}..., Received: {signature[:20]}...")
+        
+        return is_valid
         
     except Exception as e:
         logger.error(f"Error verifying webhook signature: {e}")
@@ -156,6 +161,81 @@ def get_shopify_session(shop_domain, access_token):
     session = shopify.Session(shop_domain, '2023-10', access_token)
     shopify.ShopifyResource.activate_session(session)
     return session
+
+def register_compliance_webhooks(shop_domain, access_token):
+    """
+    Register mandatory compliance webhooks with Shopify
+    Required for app review: https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance
+    
+    Args:
+        shop_domain: Shop domain (e.g., 'shop.myshopify.com')
+        access_token: Shopify access token for API calls
+    """
+    # Get app URL from environment
+    app_url = os.getenv('SHOPIFY_REDIRECT_URI', '').replace('/auth/callback', '')
+    if not app_url:
+        app_url = os.getenv('APP_URL', 'https://peeq.co.in')
+    
+    # Ensure URL doesn't end with slash
+    app_url = app_url.rstrip('/')
+    
+    # Define mandatory compliance webhooks
+    compliance_webhooks = [
+        {
+            'topic': 'customers/data_request',
+            'address': f'{app_url}/webhooks/customers/data_request',
+            'format': 'json'
+        },
+        {
+            'topic': 'customers/redact',
+            'address': f'{app_url}/webhooks/customers/redact',
+            'format': 'json'
+        },
+        {
+            'topic': 'shop/redact',
+            'address': f'{app_url}/webhooks/shop/redact',
+            'format': 'json'
+        }
+    ]
+    
+    # Register each webhook
+    webhook_url = f"https://{shop_domain}/admin/api/2023-10/webhooks.json"
+    headers = {
+        'X-Shopify-Access-Token': access_token,
+        'Content-Type': 'application/json'
+    }
+    
+    for webhook in compliance_webhooks:
+        try:
+            # Check if webhook already exists
+            list_response = requests.get(webhook_url, headers=headers, params={'topic': webhook['topic']})
+            
+            if list_response.status_code == 200:
+                existing_webhooks = list_response.json().get('webhooks', [])
+                # Check if webhook with same topic and address exists
+                existing = next(
+                    (w for w in existing_webhooks if w.get('topic') == webhook['topic'] and w.get('address') == webhook['address']),
+                    None
+                )
+                
+                if existing:
+                    logger.info(f"Webhook {webhook['topic']} already registered: {existing.get('id')}")
+                    continue
+            
+            # Register new webhook
+            response = requests.post(
+                webhook_url,
+                json={'webhook': webhook},
+                headers=headers
+            )
+            response.raise_for_status()
+            webhook_response = response.json().get('webhook', {})
+            logger.info(f"Registered webhook {webhook['topic']}: {webhook_response.get('id')}")
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to register webhook {webhook['topic']}: {e}")
+            # Continue with other webhooks even if one fails
+            continue
 
 # Routes
 @app.route('/')
@@ -253,6 +333,15 @@ def auth_callback():
             db.session.add(shop_record)
         
         db.session.commit()
+        
+        # Register mandatory compliance webhooks (required for app review)
+        try:
+            register_compliance_webhooks(shop, access_token)
+            logger.info(f"Registered compliance webhooks for shop: {shop}")
+        except Exception as e:
+            logger.error(f"Failed to register compliance webhooks: {e}")
+            # Don't fail the OAuth flow if webhook registration fails
+            # It can be done manually via Partner Dashboard
         
         # Clear OAuth state
         session.pop('oauth_state', None)
