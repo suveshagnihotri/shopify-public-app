@@ -60,7 +60,6 @@ services:
 
   certbot:
     image: certbot/certbot
-    entrypoint: /bin/sh
     volumes:
       - certbot_www:/var/www/certbot
       - certbot_certs:/etc/letsencrypt

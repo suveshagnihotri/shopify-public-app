@@ -1,0 +1,286 @@
+{
+	"info": {
+		"_postman_id": "shopify-public-app-api",
+		"name": "Shopify Public App API",
+		"description": "API collection for Shopify Public App endpoints",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Home Page",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						""
+					]
+				}
+			}
+		},
+		{
+			"name": "OAuth Initiation",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/auth?shop={{shop}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"auth"
+					],
+					"query": [
+						{
+							"key": "shop",
+							"value": "{{shop}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "OAuth Callback",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/auth/callback?code=AUTH_CODE&shop={{shop}}&state=STATE_PARAMETER",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"auth",
+						"callback"
+					],
+					"query": [
+						{
+							"key": "code",
+							"value": "AUTH_CODE",
+							"description": "Authorization code from Shopify"
+						},
+						{
+							"key": "shop",
+							"value": "{{shop}}"
+						},
+						{
+							"key": "state",
+							"value": "STATE_PARAMETER",
+							"description": "State parameter from /auth request"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "Get Products",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/products?shop={{shop}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"api",
+						"products"
+					],
+					"query": [
+						{
+							"key": "shop",
+							"value": "{{shop}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "Get Orders",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/orders?shop={{shop}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"api",
+						"orders"
+					],
+					"query": [
+						{
+							"key": "shop",
+							"value": "{{shop}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "Get Inventory",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/api/inventory?shop={{shop}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"api",
+						"inventory"
+					],
+					"query": [
+						{
+							"key": "shop",
+							"value": "{{shop}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "Sync Products",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"shop\": \"{{shop}}\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/api/sync/products",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"api",
+						"sync",
+						"products"
+					]
+				}
+			}
+		},
+		{
+			"name": "Sync Orders",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"shop\": \"{{shop}}\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/api/sync/orders",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"api",
+						"sync",
+						"orders"
+					]
+				}
+			}
+		},
+		{
+			"name": "Webhook - Product Create",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					},
+					{
+						"key": "X-Shopify-Hmac-Sha256",
+						"value": "{{webhook_secret}}",
+						"description": "Webhook signature (optional for testing)"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"id\": 1234567890,\n    \"title\": \"Test Product\",\n    \"handle\": \"test-product\",\n    \"vendor\": \"Test Vendor\",\n    \"product_type\": \"Test Type\",\n    \"created_at\": \"2024-01-01T00:00:00Z\",\n    \"updated_at\": \"2024-01-01T00:00:00Z\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/webhooks/products/create",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"webhooks",
+						"products",
+						"create"
+					]
+				}
+			}
+		},
+		{
+			"name": "Webhook - Order Create",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					},
+					{
+						"key": "X-Shopify-Hmac-Sha256",
+						"value": "{{webhook_secret}}",
+						"description": "Webhook signature (optional for testing)"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"id\": 9876543210,\n    \"order_number\": 1001,\n    \"financial_status\": \"paid\",\n    \"total_price\": \"99.99\",\n    \"currency\": \"USD\",\n    \"created_at\": \"2024-01-01T00:00:00Z\",\n    \"updated_at\": \"2024-01-01T00:00:00Z\",\n    \"line_items\": [\n        {\n            \"id\": 1111111111,\n            \"product_id\": 1234567890,\n            \"variant_id\": 2222222222,\n            \"title\": \"Test Product\",\n            \"quantity\": 1,\n            \"price\": \"99.99\"\n        }\n    ]\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/webhooks/orders/create",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"webhooks",
+						"orders",
+						"create"
+					]
+				}
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:5000",
+			"type": "string"
+		},
+		{
+			"key": "shop",
+			"value": "your-shop.myshopify.com",
+			"type": "string"
+		},
+		{
+			"key": "webhook_secret",
+			"value": "",
+			"type": "string"
+		}
+	]
+}
+
