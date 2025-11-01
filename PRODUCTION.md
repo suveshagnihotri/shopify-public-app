@@ -223,12 +223,212 @@ curl -X POST "https://your-domain.com/api/sync/orders" \
 - **Check**: Must be `https://your-domain.com/auth/callback` (exact match, including protocol and path)
 
 **Issue: "Invalid state parameter" error**
-- **Solution**: This happens if the OAuth state doesn't match (session expired or different browser)
-- **Fix**: Clear browser cookies and retry the OAuth flow
+
+This is a common OAuth issue where the session cookie doesn't persist between the `/auth` request and the `/auth/callback` request. Common causes:
+
+1. **Session cookie not being set properly**
+   - **Solution**: Ensure `SECRET_KEY` is set in `.env` file
+   - **Fix**: The app now configures session cookies with proper settings
+
+2. **Cookies blocked or SameSite issues**
+   - **Solution**: The app uses `SameSite=Lax` which allows cross-site redirects
+   - **Fix**: Ensure cookies are enabled in browser
+
+3. **Multiple app instances without shared session storage**
+   - **Cause**: If using load balancing, sessions must be stored in Redis or a shared database
+   - **Solution**: Use Redis-backed sessions or ensure sticky sessions
+
+4. **Session expires between requests**
+   - **Cause**: OAuth flow takes too long and session times out
+   - **Fix**: Session lifetime is set to 15 minutes (should be sufficient)
+
+5. **Domain mismatch**
+   - **Cause**: Session cookie domain doesn't match the callback URL domain
+   - **Fix**: Ensure the callback URL domain matches where the app is served
+
+**Debugging Steps:**
+
+Check the application logs for detailed error messages:
+```bash
+docker-compose -f docker-compose.prod.yml logs -f app | grep "OAuth"
+```
+
+The logs will show:
+- Whether state was stored in session
+- What state was received in callback
+- Any session-related errors
+
+**Fix**: The code now includes:
+- Better session cookie configuration
+- Improved error messages with hints
+- Logging for debugging
+- Permanent session flag to survive redirects
+
+If the issue persists, ensure:
+- ✅ `SECRET_KEY` is set in `.env` file
+- ✅ Cookies are enabled in browser
+- ✅ Using HTTPS in production (required for secure cookies)
+- ✅ No proxy/firewall is stripping cookies
+- ✅ Browser allows cookies from your domain
 
 **Issue: Token exchange fails**
 - **Solution**: Check that `SHOPIFY_API_KEY` and `SHOPIFY_API_SECRET` are correct
 - **Verify**: Test credentials in Shopify Partner Dashboard
+
+### 7. Configure Shopify Callback URL
+
+The callback URL is where Shopify redirects merchants after they authorize your app. This must be configured in two places:
+
+#### Step 1: Configure in Your `.env` File
+
+Set the `SHOPIFY_REDIRECT_URI` environment variable:
+
+**For Production:**
+```bash
+SHOPIFY_REDIRECT_URI=https://your-domain.com/auth/callback
+```
+
+**For Development (Local):**
+```bash
+SHOPIFY_REDIRECT_URI=http://localhost:5000/auth/callback
+```
+
+**For Development with ngrok/tunneling:**
+```bash
+SHOPIFY_REDIRECT_URI=https://your-ngrok-url.ngrok.io/auth/callback
+```
+
+#### Step 2: Configure in Shopify Partner Dashboard
+
+1. **Go to Shopify Partners Dashboard**
+   - Navigate to [partners.shopify.com](https://partners.shopify.com)
+   - Log in to your partner account
+
+2. **Select Your App**
+   - Go to "Apps" → Select your app
+
+3. **Configure Redirect URL**
+   - Click on "App setup" or "Configuration"
+   - Find "Allowed redirection URL(s)" section
+   - Add your callback URL: `https://your-domain.com/auth/callback`
+
+**Important:** The URL in Shopify Partner Dashboard must match EXACTLY:
+- ✅ **Protocol**: `https://` (required for production)
+- ✅ **Domain**: Your exact domain (e.g., `peeq.co.in`)
+- ✅ **Path**: `/auth/callback` (must match the route in `app.py`)
+
+**Example:**
+```
+✅ Correct: https://peeq.co.in/auth/callback
+❌ Wrong:   https://peeq.co.in/auth/callback/
+❌ Wrong:   http://peeq.co.in/auth/callback  (HTTP not allowed in production)
+❌ Wrong:   https://www.peeq.co.in/auth/callback  (if www is not your main domain)
+```
+
+#### Step 3: Verify the Configuration
+
+The callback route is defined in `app.py` at line 110:
+```python
+@app.route('/auth/callback')
+def auth_callback():
+    """Handle OAuth callback"""
+    # ... processes the OAuth callback
+```
+
+**Test the callback URL:**
+```bash
+# Check if the route exists (should return JSON error if not authenticated)
+curl "https://your-domain.com/auth/callback?code=test&shop=test-shop.myshopify.com&state=test"
+```
+
+#### Development Setup
+
+For local development, you'll need a public URL. Options:
+
+**Option 1: Using ngrok (Recommended)**
+```bash
+# Install ngrok: https://ngrok.com/download
+ngrok http 5000
+
+# Use the ngrok URL in both .env and Shopify Partner Dashboard
+SHOPIFY_REDIRECT_URI=https://abc123.ngrok.io/auth/callback
+```
+
+**Option 2: Using localtunnel**
+```bash
+# Install localtunnel
+npm install -g localtunnel
+
+# Create tunnel
+lt --port 5000
+
+# Use the tunnel URL in .env and Shopify Partner Dashboard
+SHOPIFY_REDIRECT_URI=https://your-tunnel-url.loca.lt/auth/callback
+```
+
+**Option 3: Using Docker with exposed ports**
+If using Docker Compose, ensure port 5000 is exposed, then use your server's IP:
+```bash
+SHOPIFY_REDIRECT_URI=http://your-server-ip:5000/auth/callback
+```
+
+#### Multiple Environments
+
+If you have multiple environments (dev, staging, production), you can add multiple redirect URLs in Shopify Partner Dashboard:
+
+```
+https://dev.your-domain.com/auth/callback
+https://staging.your-domain.com/auth/callback
+https://your-domain.com/auth/callback
+```
+
+Each environment's `.env` file should have its corresponding `SHOPIFY_REDIRECT_URI`.
+
+#### Common Callback URL Issues
+
+**Issue: "redirect_uri_mismatch" error**
+- **Cause**: The callback URL in your `.env` doesn't match what's configured in Shopify Partner Dashboard
+- **Solution**: Ensure exact match (protocol, domain, path)
+
+**Issue: Callback URL not accessible**
+- **Cause**: Your server/domain is not publicly accessible or HTTPS not configured
+- **Solution**: 
+  - Verify DNS points to your server
+  - Ensure HTTPS is configured (SSL certificate)
+  - Check firewall/security group allows HTTPS traffic on port 443
+
+**Issue: "Invalid state parameter" in callback**
+- **Cause**: Session expired or browser cookies cleared during OAuth flow
+- **Solution**: Complete the OAuth flow in one browser session without clearing cookies
+
+**Issue: Callback receives errors from Shopify**
+- **Cause**: App not properly configured in Shopify Partner Dashboard
+- **Solution**: 
+  - Verify app credentials (API Key/Secret)
+  - Check required scopes are enabled
+  - Ensure app is not paused or deleted
+
+#### Verification Checklist
+
+- [ ] `SHOPIFY_REDIRECT_URI` is set in `.env` file
+- [ ] Callback URL matches exactly in Shopify Partner Dashboard
+- [ ] URL uses HTTPS for production (required by Shopify)
+- [ ] Domain is publicly accessible and DNS configured
+- [ ] SSL certificate is valid and active
+- [ ] Route `/auth/callback` exists and is accessible
+- [ ] App credentials are correct in `.env`
+
+#### Quick Test
+
+Test if your callback URL is configured correctly:
+
+```bash
+# Replace with your domain
+curl -I "https://your-domain.com/auth/callback"
+
+# Should return HTTP 200 or 400 (not 404)
+# If 404, the route is not accessible
+```
 
 #### Onboarding Multiple Stores
 
@@ -527,9 +727,169 @@ Run this to get a complete status:
 
 ### Database Connection Issues
 
+#### For Local Docker Database
+
 1. Wait for database to be ready (can take 30-60 seconds)
 2. Check DATABASE_URL matches service name (`db:5432` not `localhost:5432`)
 3. Verify database credentials in `.env`
+
+#### For AWS RDS Database
+
+If you're connecting to AWS RDS PostgreSQL, ensure your `DATABASE_URL` is correctly formatted:
+
+**Correct RDS Connection String Format:**
+```bash
+DATABASE_URL=postgresql://username:password@shopify-db.cenke4ki6iif.us-east-1.rds.amazonaws.com:5432/database_name
+```
+
+**Common Issues with RDS Connections:**
+
+**Issue: "Connection refused" or "connection to server on socket failed"**
+
+This usually means:
+1. **Incorrect connection string format** - The URL must start with `postgresql://` or `postgresql+psycopg2://`
+2. **Missing username/password** - The connection string must include credentials
+3. **Network/security group issues** - Your server/container may not have access to RDS
+
+**Solution: Verify Connection String Format**
+
+The connection string MUST follow this format:
+```
+postgresql://[username]:[password]@[hostname]:[port]/[database_name]
+```
+
+Example for RDS:
+```bash
+DATABASE_URL=postgresql://postgres:your_password@shopify-db.cenke4ki6iif.us-east-1.rds.amazonaws.com:5432/shopify_app_db
+```
+
+**Special characters in password:** If your password contains special characters (like `@`, `:`, `/`, `#`, etc.), URL-encode them:
+- `@` becomes `%40`
+- `:` becomes `%3A`
+- `/` becomes `%2F`
+- `#` becomes `%23`
+
+**Example with encoded password:**
+```bash
+# If password is "p@ss:w#rd/123"
+DATABASE_URL=postgresql://postgres:p%40ss%3Aw%23rd%2F123@shopify-db.cenke4ki6iif.us-east-1.rds.amazonaws.com:5432/shopify_app_db
+```
+
+**Issue: "Connection timed out"**
+
+This usually means:
+1. **Security group not configured** - RDS security group must allow inbound traffic from your server/container
+2. **VPC/subnet issues** - Server and RDS must be in compatible networks
+3. **Network ACLs blocking traffic** - Check AWS VPC network ACLs
+
+**Solution: Configure RDS Security Group**
+1. Go to AWS RDS Console → Select your database → Security tab
+2. Check security group inbound rules
+3. Add rule to allow PostgreSQL (port 5432) from:
+   - Your server's IP address
+   - Your VPC CIDR block (if server is in same VPC)
+   - Security group ID (if server uses a security group)
+
+**Issue: "FATAL: password authentication failed"**
+
+This means:
+1. **Wrong password** - Verify the password is correct
+2. **Wrong username** - Check the master username in RDS
+3. **Password changed but not updated** - Update `.env` file with new password
+
+**Solution: Test Connection**
+
+Test the RDS connection from your server:
+
+```bash
+# Using psql (if installed)
+psql "postgresql://username:password@shopify-db.cenke4ki6iif.us-east-1.rds.amazonaws.com:5432/database_name"
+
+# Or using Python
+python -c "
+from sqlalchemy import create_engine
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+db_url = os.getenv('DATABASE_URL')
+print(f'Testing connection to: {db_url.split(\"@\")[1] if \"@\" in db_url else \"invalid URL\"}')
+try:
+    engine = create_engine(db_url)
+    with engine.connect() as conn:
+        result = conn.execute('SELECT version();')
+        print('✅ Connection successful!')
+        print(result.fetchone()[0])
+except Exception as e:
+    print(f'❌ Connection failed: {e}')
+"
+```
+
+**Issue: Connection works locally but not from Docker container**
+
+If connection works from your local machine but not from Docker:
+
+1. **Network mode** - Container might not have internet access
+2. **DNS resolution** - Container might not resolve RDS hostname
+3. **Security group** - Security group might only allow your local IP, not container IP
+
+**Solution: Check Container Network**
+
+```bash
+# Test DNS resolution from container
+docker-compose -f docker-compose.prod.yml exec app nslookup shopify-db.cenke4ki6iif.us-east-1.rds.amazonaws.com
+
+# Test connection from container
+docker-compose -f docker-compose.prod.yml exec app python -c "
+import psycopg2
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+try:
+    # Parse connection string
+    db_url = os.getenv('DATABASE_URL')
+    # Extract components and test
+    conn = psycopg2.connect(db_url)
+    print('✅ Connection successful!')
+    conn.close()
+except Exception as e:
+    print(f'❌ Connection failed: {e}')
+"
+```
+
+**Alternative: Use postgresql+psycopg2://**
+
+If `postgresql://` doesn't work, try explicitly specifying the driver:
+
+```bash
+DATABASE_URL=postgresql+psycopg2://username:password@shopify-db.cenke4ki6iif.us-east-1.rds.amazonaws.com:5432/database_name
+```
+
+**Verifying Connection String in Production**
+
+```bash
+# Check what DATABASE_URL is being used (without exposing password)
+docker-compose -f docker-compose.prod.yml exec app python -c "
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+db_url = os.getenv('DATABASE_URL')
+if db_url:
+    # Show URL without password
+    if '@' in db_url:
+        parts = db_url.split('@')
+        if '://' in parts[0]:
+            print(f'Database: {parts[0].split(\"://\")[0]}://***@{parts[1]}')
+        else:
+            print('Invalid DATABASE_URL format')
+    else:
+        print('Invalid DATABASE_URL format - missing @')
+else:
+    print('DATABASE_URL not set')
+"
+```
 
 ### Application Errors
 

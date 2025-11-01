@@ -13,8 +13,10 @@ from urllib.parse import urlencode, parse_qs
 
 import shopify
 import requests
+import redis
 from flask import Flask, request, jsonify, redirect, session, render_template
 from flask_migrate import Migrate
+from flask_session import Session
 from dotenv import load_dotenv
 from celery import Celery
 
@@ -27,10 +29,28 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///shopify_app.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Configure session settings for OAuth
+app.config['SESSION_COOKIE_SECURE'] = os.getenv('FLASK_ENV') == 'production'  # HTTPS only in production
+app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevent XSS attacks
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Allow cross-site redirects but maintain CSRF protection
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=15)  # Session timeout
+
+# Configure Flask-Session to use Redis for session storage (required for multiple workers)
+redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+# Use a different Redis database for sessions (db 1) to avoid conflicts with Celery (db 0)
+session_redis_url = redis_url.rsplit('/', 1)[0] + '/1'  # Change db number to 1
+app.config['SESSION_TYPE'] = 'redis'
+# Do NOT use decode_responses=True - Flask-Session stores binary pickled data
+app.config['SESSION_REDIS'] = redis.from_url(session_redis_url, decode_responses=False)
+app.config['SESSION_KEY_PREFIX'] = 'session:'
+
 # Initialize extensions (use the shared db from models)
 from models import db, Shop, ProductSync, ProductVariant, OrderSync, OrderLineItem, InventoryLevel, WebhookLog
 db.init_app(app)
 migrate = Migrate(app, db)
+
+# Initialize Flask-Session after app config
+Session(app)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -94,6 +114,8 @@ def auth():
     # Generate state parameter for security
     state = os.urandom(16).hex()
     session['oauth_state'] = state
+    session.permanent = True  # Make session permanent so it survives the OAuth redirect
+    logger.info(f"OAuth initiated for shop: {shop}, State: {state[:8]}...")
     
     # Build authorization URL
     params = {
@@ -114,11 +136,34 @@ def auth_callback():
     shop = request.args.get('shop')
     state = request.args.get('state')
     
+    # Log callback for debugging
+    logger.info(f"OAuth callback received - Shop: {shop}, State present: {bool(state)}, Code present: {bool(code)}")
+    logger.info(f"Session state stored: {session.get('oauth_state')}, Received state: {state}")
+    
     # Verify state parameter
-    if state != session.get('oauth_state'):
-        return jsonify({'error': 'Invalid state parameter'}), 400
+    stored_state = session.get('oauth_state')
+    if not state:
+        logger.error("State parameter missing from callback")
+        return jsonify({'error': 'Missing state parameter'}), 400
+    
+    if not stored_state:
+        logger.error("No state found in session - session may have expired or cookie not set")
+        return jsonify({
+            'error': 'Invalid state parameter',
+            'message': 'Session expired or not found. Please try the OAuth flow again.',
+            'hint': 'Make sure cookies are enabled and you complete the flow in the same browser session.'
+        }), 400
+    
+    if state != stored_state:
+        logger.error(f"State mismatch - Stored: {stored_state}, Received: {state}")
+        return jsonify({
+            'error': 'Invalid state parameter',
+            'message': 'State parameter does not match. This may indicate a security issue or session problem.',
+            'hint': 'Please try the OAuth flow again from the beginning.'
+        }), 400
     
     if not code or not shop:
+        logger.error(f"Missing required parameters - Code: {bool(code)}, Shop: {bool(shop)}")
         return jsonify({'error': 'Missing authorization code or shop'}), 400
     
     # Exchange code for access token
