@@ -877,11 +877,177 @@ Run this to get a complete status:
 ./scripts/check_prod.sh
 ```
 
+### 502 Bad Gateway Error
+
+A 502 Bad Gateway error means nginx is running but cannot connect to the app service.
+
+#### Quick Diagnostic
+
+Run the diagnostic script:
+
+```bash
+./scripts/diagnose_502.sh
+```
+
+This will check:
+- Service status (nginx, app, redis, db)
+- App logs for errors
+- Port listening status
+- Network connectivity between nginx and app
+- Configuration issues
+
+#### Common Causes and Solutions
+
+**Cause 1: App service is not running**
+
+**Check:**
+```bash
+docker-compose -f docker-compose.prod.yml ps app
+```
+
+**Fix:**
+```bash
+# Start app service
+docker-compose -f docker-compose.prod.yml up -d app
+
+# Or restart all services
+docker-compose -f docker-compose.prod.yml restart
+```
+
+**Cause 2: App service failed to start (crashed)**
+
+**Check:**
+```bash
+# View app logs for errors
+docker-compose -f docker-compose.prod.yml logs --tail=50 app
+```
+
+Common startup errors:
+- Redis connection error → Check Redis is running and `REDIS_URL` is correct
+- Database connection error → Check database is running and `DATABASE_URL` is correct
+- Missing environment variables → Check `.env` file has all required variables
+- Port binding error → Check app is binding to `0.0.0.0:8000`
+
+**Fix:**
+```bash
+# Restart app service
+docker-compose -f docker-compose.prod.yml restart app
+
+# Or recreate it
+docker-compose -f docker-compose.prod.yml up -d --force-recreate app
+```
+
+**Cause 3: App is not listening on port 8000**
+
+**Check:**
+```bash
+# Check if app is listening on port 8000 inside container
+docker-compose -f docker-compose.prod.yml exec app netstat -tuln | grep 8000
+# Or
+docker-compose -f docker-compose.prod.yml exec app ss -tuln | grep 8000
+```
+
+**Fix:**
+If app is not listening on port 8000:
+1. Check app logs for binding errors
+2. Verify `docker-compose.prod.yml` command: `gunicorn -w 3 -k sync -b 0.0.0.0:8000 app:app`
+3. Restart app service
+
+**Cause 4: Redis connection error preventing app from starting**
+
+**Check:**
+```bash
+# Check Redis is running
+docker-compose -f docker-compose.prod.yml ps redis
+
+# Test Redis connection
+docker-compose -f docker-compose.prod.yml exec redis redis-cli ping
+# Should return: PONG
+```
+
+**Fix:**
+```bash
+# If Redis is down, start it
+docker-compose -f docker-compose.prod.yml up -d redis
+
+# Verify REDIS_URL in .env points to redis:6379 (for Docker)
+# Check app.py uses correct Redis URL for production
+```
+
+**Cause 5: Docker network issue between nginx and app**
+
+**Check:**
+```bash
+# Test if nginx can reach app
+docker-compose -f docker-compose.prod.yml exec nginx wget -q --spider --timeout=2 http://app:8000/
+```
+
+**Fix:**
+```bash
+# Restart nginx service
+docker-compose -f docker-compose.prod.yml restart nginx
+
+# Or restart all services to rebuild network
+docker-compose -f docker-compose.prod.yml down
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+**Cause 6: Nginx configuration error**
+
+**Check:**
+```bash
+# Test nginx configuration
+docker-compose -f docker-compose.prod.yml exec nginx nginx -t
+```
+
+**Verify nginx config:**
+- `proxy_pass http://app:8000;` should point to app service on port 8000
+- Service name `app` matches docker-compose service name
+
+**Fix:**
+- Update `nginx/peeq.conf` if `proxy_pass` is incorrect
+- Restart nginx: `docker-compose -f docker-compose.prod.yml restart nginx`
+
+#### Step-by-Step Troubleshooting
+
+1. **Run diagnostic script:**
+   ```bash
+   ./scripts/diagnose_502.sh
+   ```
+
+2. **Check app service logs:**
+   ```bash
+   docker-compose -f docker-compose.prod.yml logs -f app
+   ```
+
+3. **Verify all services are running:**
+   ```bash
+   docker-compose -f docker-compose.prod.yml ps
+   ```
+
+4. **Test app directly (bypass nginx):**
+   ```bash
+   # From host, test app container directly
+   docker-compose -f docker-compose.prod.yml exec app curl http://localhost:8000/
+   ```
+
+5. **Test nginx → app connection:**
+   ```bash
+   # From nginx container, test app connection
+   docker-compose -f docker-compose.prod.yml exec nginx wget -O- http://app:8000/
+   ```
+
+6. **If all else fails, restart everything:**
+   ```bash
+   docker-compose -f docker-compose.prod.yml down
+   docker-compose -f docker-compose.prod.yml up -d
+   ```
+
 ### Services Won't Start
 
 1. Check logs: `docker-compose -f docker-compose.prod.yml logs`
 2. Verify environment variables in `.env`
-3. Check port availability: `netstat -an | grep -E ':(80|443|5000)'`
+3. Check port availability: `netstat -an | grep -E ':(80|443|8000)'`
 4. Verify Docker has enough resources
 
 ### Database Connection Issues
