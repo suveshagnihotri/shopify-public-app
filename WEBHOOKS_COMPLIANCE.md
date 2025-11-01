@@ -2,6 +2,10 @@
 
 Shopify requires all apps to implement mandatory compliance webhooks for customer privacy (GDPR/CCPA compliance). This guide shows how to set up and register these webhooks.
 
+**Reference Documentation:**
+- [Shopify Privacy Law Compliance](https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance)
+- [Shopify HTTPS Webhooks Best Practices](https://shopify.dev/docs/apps/build/webhooks/subscribe/https)
+
 ## Required Webhooks
 
 Shopify requires three mandatory webhooks:
@@ -186,41 +190,91 @@ curl -X POST https://peeq.co.in/webhooks/customers/data_request \
 
 **When triggered**: When a customer requests their personal data (GDPR right to access)
 
+**Payload structure** (from [Shopify documentation](https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance)):
+```json
+{
+    "shop_id": 954889,
+    "shop_domain": "{shop}.myshopify.com",
+    "orders_requested": [299938, 280263, 220458],
+    "customer": {
+        "id": 191167,
+        "email": "john@example.com",
+        "phone": "555-625-1199"
+    },
+    "data_request": {
+        "id": 9999
+    }
+}
+```
+
 **What you must do**:
 - Collect all customer data from your database
-- Compile it in a format the customer can access
+- Compile it in a format the customer/store owner can access
 - Make it available (via email or your app)
+- Complete within 30 days of receiving the request
 
-**Current implementation**: Logs the request for compliance tracking
+**Current implementation**: Logs the request for compliance tracking. **TODO**: Implement actual data collection and delivery.
 
 ### 2. customers/redact
 
 **When triggered**: When a customer requests data deletion (GDPR right to be forgotten)
 
+**Timing**:
+- If customer hasn't placed an order in past 6 months: webhook sent 10 days after request
+- Otherwise: webhook sent 6 months after request
+
+**Payload structure** (from [Shopify documentation](https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance)):
+```json
+{
+    "shop_id": 954889,
+    "shop_domain": "{shop}.myshopify.com",
+    "customer": {
+        "id": 191167,
+        "email": "john@example.com",
+        "phone": "555-625-1199"
+    },
+    "orders_to_redact": [299938, 280263, 220458]
+}
+```
+
 **What you must do**:
 - Delete or anonymize all customer personal data
-- Delete all orders associated with the customer
+- Delete or anonymize all orders in `orders_to_redact` list
 - Delete any other customer-related records
+- Complete within 30 days (unless legally required to retain data)
 
-**Current implementation**: Logs the request. **You should extend this to actually delete customer data.**
+**Current implementation**: Logs the request. **TODO**: Implement actual data deletion/anonymization.
 
 ### 3. shop/redact
 
-**When triggered**: When a shop uninstalls your app
+**When triggered**: 48 hours after a store owner uninstalls your app
+
+**Payload structure** (from [Shopify documentation](https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance)):
+```json
+{
+    "shop_id": 954889,
+    "shop_domain": "{shop}.myshopify.com"
+}
+```
 
 **What you must do**:
 - Delete all shop-related data from your database
-- Delete orders, products, inventory, etc. for that shop
+- Delete orders, products, inventory, webhook logs, etc. for that shop
+- Delete the shop record itself
 
-**Current implementation**: Deletes all shop-related data (orders, products, inventory, webhook logs, shop record)
+**Current implementation**: ✅ Fully implemented - deletes all shop-related data (orders, products, inventory, order line items, webhook logs, shop record)
 
 ## Important Notes
 
-1. **All webhooks must return HTTP 200** - If they don't, Shopify will retry
+According to [Shopify's privacy law compliance requirements](https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance):
+
+1. **All webhooks must return HTTP 200 series status code** - If they don't, Shopify will retry
 2. **Webhooks must be publicly accessible** - Use HTTPS (`https://peeq.co.in`)
-3. **Webhook signature verification** - Always verify the `X-Shopify-Hmac-Sha256` header
-4. **Response time** - Webhooks should respond within 5 seconds
-5. **Logging** - All webhooks log requests for compliance/audit purposes
+3. **Webhook signature verification** - Must return `401 Unauthorized` if HMAC header is invalid
+4. **Response time** - Webhooks should respond within 5 seconds (Shopify timeout)
+5. **Completion deadline** - Must complete the action within 30 days of receiving the request
+6. **Handle POST requests** - Must handle POST requests with JSON body and `Content-Type: application/json`
+7. **Logging** - All webhooks log requests for compliance/audit purposes
 
 ## Environment Variables
 

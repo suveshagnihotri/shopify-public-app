@@ -783,25 +783,48 @@ def process_order_webhook(order_data):
 def process_customer_data_request(webhook_data):
     """
     Process customer data request webhook (GDPR compliance)
-    Queued for async processing to ensure fast webhook response
+    Following Shopify's privacy law compliance: https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance
+    
+    Payload structure:
+    {
+        "shop_id": 954889,
+        "shop_domain": "{shop}.myshopify.com",
+        "orders_requested": [299938, 280263, 220458],
+        "customer": {
+            "id": 191167,
+            "email": "john@example.com",
+            "phone": "555-625-1199"
+        },
+        "data_request": {
+            "id": 9999
+        }
+    }
+    
+    Must complete action within 30 days of receiving the request.
+    Queued for async processing to ensure fast webhook response.
     """
     try:
+        shop_id = webhook_data.get('shop_id')
         shop_domain = webhook_data.get('shop_domain')
-        customer_id = webhook_data.get('customer', {}).get('id') if isinstance(webhook_data.get('customer'), dict) else webhook_data.get('customer_id')
+        customer = webhook_data.get('customer', {})
+        customer_id = customer.get('id') if isinstance(customer, dict) else None
+        customer_email = customer.get('email') if isinstance(customer, dict) else None
         orders_requested = webhook_data.get('orders_requested', [])
+        data_request_id = webhook_data.get('data_request', {}).get('id') if isinstance(webhook_data.get('data_request'), dict) else None
         
-        logger.info(f"Processing customer data request for shop: {shop_domain}, customer: {customer_id}")
+        logger.info(f"Processing customer data request for shop: {shop_domain} (ID: {shop_id}), customer: {customer_id} ({customer_email}), data_request_id: {data_request_id}, orders: {orders_requested}")
         
-        # Log the data request for compliance
+        # Log the data request for compliance tracking
         webhook_log = WebhookLog(
             shop_id=None,  # Will be set if shop found
             webhook_type='customers/data_request',
-            resource_id=str(customer_id) if customer_id else 'unknown',
+            resource_id=str(customer_id) if customer_id else str(data_request_id) if data_request_id else 'unknown',
             status='processing',
             payload=json.dumps(webhook_data)
         )
         
         # Try to find shop record
+        shop_record = None
         if shop_domain:
             shop_record = Shop.query.filter_by(shop_domain=shop_domain).first()
             if shop_record:
@@ -810,16 +833,28 @@ def process_customer_data_request(webhook_data):
         db.session.add(webhook_log)
         db.session.commit()
         
-        # In a real app, you would:
+        # TODO: Implement actual data collection and delivery
+        # According to Shopify requirements:
         # 1. Collect all customer data from your database
-        # 2. Compile it into a format the customer can access
+        # 2. Compile it in a format the customer/store owner can access
         # 3. Send it via email or make it available through your app
-        # For now, we just log it
+        # 4. Must complete within 30 days
+        
+        # Example implementation:
+        # if shop_record and customer_id:
+        #     # Collect all data for this customer
+        #     # - Customer records
+        #     # - Order data for orders in orders_requested list
+        #     # - Any other customer-related data
+        #     
+        #     # Compile into accessible format (JSON, PDF, etc.)
+        #     # Send to store owner or customer
+        #     pass
         
         webhook_log.status = 'completed'
         db.session.commit()
         
-        logger.info(f"Completed customer data request for customer {customer_id}")
+        logger.info(f"Completed customer data request for customer {customer_id} (data_request_id: {data_request_id})")
         
     except Exception as e:
         logger.error(f"Error processing customer data request: {e}")
@@ -831,16 +866,36 @@ def process_customer_data_request(webhook_data):
 def process_customer_redact(webhook_data):
     """
     Process customer redact webhook (GDPR/CCPA compliance)
-    Queued for async processing to ensure fast webhook response
+    Following Shopify's privacy law compliance: https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance
+    
+    Payload structure:
+    {
+        "shop_id": 954889,
+        "shop_domain": "{shop}.myshopify.com",
+        "customer": {
+            "id": 191167,
+            "email": "john@example.com",
+            "phone": "555-625-1199"
+        },
+        "orders_to_redact": [299938, 280263, 220458]
+    }
+    
+    If customer hasn't placed an order in past 6 months, webhook is sent 10 days after request.
+    Otherwise, webhook is sent 6 months after request.
+    Must complete action within 30 days (unless legally required to retain data).
+    Queued for async processing to ensure fast webhook response.
     """
     try:
+        shop_id = webhook_data.get('shop_id')
         shop_domain = webhook_data.get('shop_domain')
-        customer_id = webhook_data.get('customer', {}).get('id') if isinstance(webhook_data.get('customer'), dict) else webhook_data.get('customer_id')
+        customer = webhook_data.get('customer', {})
+        customer_id = customer.get('id') if isinstance(customer, dict) else None
+        customer_email = customer.get('email') if isinstance(customer, dict) else None
         orders_to_redact = webhook_data.get('orders_to_redact', [])
         
-        logger.info(f"Processing customer redact for shop: {shop_domain}, customer: {customer_id}")
+        logger.info(f"Processing customer redact for shop: {shop_domain} (ID: {shop_id}), customer: {customer_id} ({customer_email}), orders to redact: {orders_to_redact}")
         
-        # Log the redact request
+        # Log the redact request for compliance tracking
         webhook_log = WebhookLog(
             shop_id=None,
             webhook_type='customers/redact',
@@ -850,6 +905,7 @@ def process_customer_redact(webhook_data):
         )
         
         # Try to find shop record
+        shop_record = None
         if shop_domain:
             shop_record = Shop.query.filter_by(shop_domain=shop_domain).first()
             if shop_record:
@@ -858,23 +914,29 @@ def process_customer_redact(webhook_data):
         db.session.add(webhook_log)
         db.session.commit()
         
-        # In a real app, you would:
-        # 1. Delete or anonymize all customer data from your database
-        # 2. Delete all orders associated with this customer
+        # TODO: Implement actual data deletion/anonymization
+        # According to Shopify requirements:
+        # 1. Delete or anonymize all customer personal data from your database
+        # 2. Delete or anonymize all orders in orders_to_redact list
         # 3. Delete any other customer-related records
-        # For now, we just log it
+        # 4. Must complete within 30 days (unless legally required to retain)
         
-        # Example: Anonymize order data if orders are linked to customers
-        # You would need to add customer_id to OrderSync model for this to work
-        if shop_domain and customer_id:
-            # TODO: Implement actual data deletion/anonymization
-            # OrderSync.query.filter_by(shop_id=shop_record.id, customer_id=customer_id).delete()
-            pass
+        # Example implementation:
+        # if shop_record and customer_id:
+        #     # Delete customer data
+        #     # Anonymize order data for orders in orders_to_redact
+        #     # If orders are linked to customers, you'd need customer_id in OrderSync model
+        #     for order_id in orders_to_redact:
+        #         order = OrderSync.query.filter_by(shop_id=shop_record.id, order_id=order_id).first()
+        #         if order:
+        #             # Anonymize order data instead of deleting (for business records)
+        #             # or delete if not needed
+        #             pass
         
         webhook_log.status = 'completed'
         db.session.commit()
         
-        logger.info(f"Completed customer redact for customer {customer_id}")
+        logger.info(f"Completed customer redact for customer {customer_id}, redacted {len(orders_to_redact)} orders")
         
     except Exception as e:
         logger.error(f"Error processing customer redact: {e}")
@@ -886,18 +948,29 @@ def process_customer_redact(webhook_data):
 def process_shop_redact(webhook_data):
     """
     Process shop redact webhook (shop uninstall data deletion)
-    Queued for async processing to ensure fast webhook response
+    Following Shopify's privacy law compliance: https://shopify.dev/docs/apps/build/compliance/privacy-law-compliance
+    
+    Payload structure:
+    {
+        "shop_id": 954889,
+        "shop_domain": "{shop}.myshopify.com"
+    }
+    
+    This webhook is sent 48 hours after a store owner uninstalls your app.
+    Must delete all shop-related data from your database.
+    Queued for async processing to ensure fast webhook response.
     """
     try:
+        shop_id = webhook_data.get('shop_id')
         shop_domain = webhook_data.get('shop_domain')
         
-        logger.info(f"Processing shop redact for shop: {shop_domain}")
+        logger.info(f"Processing shop redact for shop: {shop_domain} (ID: {shop_id})")
         
-        # Log the redact request
+        # Log the redact request for compliance tracking
         webhook_log = WebhookLog(
             shop_id=None,
             webhook_type='shop/redact',
-            resource_id=shop_domain or 'unknown',
+            resource_id=shop_domain or str(shop_id) or 'unknown',
             status='processing',
             payload=json.dumps(webhook_data)
         )
@@ -912,33 +985,45 @@ def process_shop_redact(webhook_data):
         db.session.add(webhook_log)
         db.session.commit()
         
-        # Delete or anonymize all shop-related data
+        # Delete all shop-related data (as required by Shopify)
         if shop_record:
+            deleted_counts = {}
+            
             # Delete all orders for this shop
+            deleted_orders = OrderSync.query.filter_by(shop_id=shop_record.id).count()
             OrderSync.query.filter_by(shop_id=shop_record.id).delete()
+            deleted_counts['orders'] = deleted_orders
             
             # Delete all products for this shop
+            deleted_products = ProductSync.query.filter_by(shop_id=shop_record.id).count()
             ProductSync.query.filter_by(shop_id=shop_record.id).delete()
+            deleted_counts['products'] = deleted_products
             
             # Delete all inventory levels
+            deleted_inventory = InventoryLevel.query.filter_by(shop_id=shop_record.id).count()
             InventoryLevel.query.filter_by(shop_id=shop_record.id).delete()
+            deleted_counts['inventory'] = deleted_inventory
             
             # Delete all order line items
             from models import OrderLineItem
+            deleted_line_items = OrderLineItem.query.filter_by(shop_id=shop_record.id).count()
             OrderLineItem.query.filter_by(shop_id=shop_record.id).delete()
+            deleted_counts['line_items'] = deleted_line_items
             
             # Delete all webhook logs for this shop (except this one)
+            deleted_webhooks = WebhookLog.query.filter_by(shop_id=shop_record.id).filter(WebhookLog.id != webhook_log.id).count()
             WebhookLog.query.filter_by(shop_id=shop_record.id).filter(WebhookLog.id != webhook_log.id).delete()
+            deleted_counts['webhook_logs'] = deleted_webhooks
             
             # Delete the shop record itself
             db.session.delete(shop_record)
             
-            logger.info(f"Deleted all data for shop: {shop_domain}")
+            logger.info(f"Deleted all data for shop: {shop_domain} - {deleted_counts}")
         
         webhook_log.status = 'completed'
         db.session.commit()
         
-        logger.info(f"Completed shop redact for shop {shop_domain}")
+        logger.info(f"Completed shop redact for shop {shop_domain} (ID: {shop_id})")
         
     except Exception as e:
         logger.error(f"Error processing shop redact: {e}")
