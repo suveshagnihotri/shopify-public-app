@@ -17,7 +17,7 @@ services:
       - redis
     volumes:
       - .:/app
-    command: gunicorn -w 3 -k sync -b 0.0.0.0:5000 app:app
+    command: gunicorn -w 3 -k sync -b 0.0.0.0:8000 app:app
 
   worker:
     build: .
