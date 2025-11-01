@@ -23,6 +23,10 @@ from celery import Celery
 # Load environment variables
 load_dotenv()
 
+# Configure logging early (before other components that might use logger)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
@@ -41,9 +45,29 @@ default_redis = 'redis://redis:6379/0' if os.getenv('FLASK_ENV') == 'production'
 redis_url = os.getenv('REDIS_URL', default_redis)
 # Use a different Redis database for sessions (db 1) to avoid conflicts with Celery (db 0)
 session_redis_url = redis_url.rsplit('/', 1)[0] + '/1'  # Change db number to 1
+
+# Wait for Redis to be ready with retries (important for Docker startup)
+redis_client = None
+max_retries = 5
+retry_delay = 2
+import time
+for attempt in range(max_retries):
+    try:
+        redis_client = redis.from_url(session_redis_url, decode_responses=False, socket_connect_timeout=5)
+        # Test connection
+        redis_client.ping()
+        logger.info("Successfully connected to Redis for sessions")
+        break
+    except (redis.ConnectionError, redis.TimeoutError) as e:
+        if attempt < max_retries - 1:
+            logger.warning(f"Redis connection attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {retry_delay}s...")
+            time.sleep(retry_delay)
+        else:
+            logger.error(f"Failed to connect to Redis after {max_retries} attempts: {e}")
+            raise
+
 app.config['SESSION_TYPE'] = 'redis'
-# Do NOT use decode_responses=True - Flask-Session stores binary pickled data
-app.config['SESSION_REDIS'] = redis.from_url(session_redis_url, decode_responses=False)
+app.config['SESSION_REDIS'] = redis_client
 app.config['SESSION_KEY_PREFIX'] = 'session:'
 
 # Initialize extensions (use the shared db from models)
@@ -52,11 +76,12 @@ db.init_app(app)
 migrate = Migrate(app, db)
 
 # Initialize Flask-Session after app config
-Session(app)
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+try:
+    Session(app)
+    logger.info("Flask-Session initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize Flask-Session: {e}")
+    raise
 
 # Shopify configuration
 SHOPIFY_API_KEY = os.getenv('SHOPIFY_API_KEY')
