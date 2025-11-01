@@ -32,19 +32,25 @@ Shopify's automated checks need webhooks to be registered. Do this first:
    - **Callback URL**: `https://peeq.co.in/webhooks/shop/redact`
    - **Save**
 
-### Step 2: Set WEBHOOK_SECRET (CRITICAL)
+### Step 2: Set SHOPIFY_API_SECRET (CRITICAL for HMAC)
 
-1. **Get Webhook Secret:**
+**Important**: Shopify uses your **API Secret (Client Secret)** for webhook HMAC verification, not a separate webhook secret.
+
+1. **Verify SHOPIFY_API_SECRET is set:**
    - Go to **Partner Dashboard** → **Your App** → **App setup** → **API credentials**
-   - Copy the **Webhook signing secret**
+   - Your **Client secret** is what you need for HMAC verification
+   - This should already be set in your `.env` as `SHOPIFY_API_SECRET`
 
-2. **Update `.env` on EC2:**
+2. **Check `.env` on EC2:**
    ```bash
    # Edit .env file on your EC2 server
    nano .env
    
-   # Add or update this line:
-   WEBHOOK_SECRET=your_webhook_signing_secret_from_partner_dashboard
+   # Ensure this is set:
+   SHOPIFY_API_SECRET=your_client_secret_from_partner_dashboard
+   
+   # Optional: Also set WEBHOOK_SECRET (if you use Partner Dashboard webhooks)
+   # For Admin API registered webhooks, SHOPIFY_API_SECRET is used automatically
    ```
 
 3. **Restart app service:**

@@ -117,11 +117,14 @@ def verify_webhook(data, signature):
     Returns:
         bool: True if signature is valid, False otherwise
     """
-    if not WEBHOOK_SECRET:
-        logger.warning("WEBHOOK_SECRET not set - skipping verification (not recommended for production)")
-        # In production, this should return False, but for development/testing, allow it
-        # TODO: Set WEBHOOK_SECRET in production
-        return True  # Skip verification in development
+    # Use SHOPIFY_API_SECRET if WEBHOOK_SECRET is not set (common setup)
+    # For webhooks registered via Admin API, use SHOPIFY_API_SECRET
+    # For webhooks registered via Partner Dashboard, use WEBHOOK_SECRET
+    secret = WEBHOOK_SECRET or SHOPIFY_API_SECRET
+    
+    if not secret:
+        logger.error("Neither WEBHOOK_SECRET nor SHOPIFY_API_SECRET is set - cannot verify webhook")
+        return False  # Return False in production to fail verification
     
     if not signature:
         logger.error("Missing webhook signature header")
@@ -129,8 +132,10 @@ def verify_webhook(data, signature):
     
     try:
         # Calculate HMAC-SHA256 digest
+        # Use SHOPIFY_API_SECRET if WEBHOOK_SECRET is not set
+        secret = WEBHOOK_SECRET or SHOPIFY_API_SECRET
         hmac_obj = hmac.new(
-            WEBHOOK_SECRET.encode('utf-8'),
+            secret.encode('utf-8'),
             data,
             hashlib.sha256
         )
